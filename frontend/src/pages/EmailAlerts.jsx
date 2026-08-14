@@ -3,7 +3,7 @@ import api from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { pageClass } from '../themes/tileHelpers';
-import PageHeader from '../components/PageHeader';
+import { hasRole } from '../config/accessMatrix';
 
 const REPORT_OPTIONS = [
   { key: 'oee',          label: 'OEE / Production' },
@@ -56,7 +56,7 @@ export default function EmailAlerts() {
   const [deviationMsg, setDeviationMsg] = useState('');
   const [escalationDraft, setEscalationDraft] = useState(null);
   const [escalationMsg, setEscalationMsg] = useState('');
-  const isAdmin = user?.role === 'admin';
+  const isAdmin = hasRole(user?.role, 'admin');
 
   const fetchDeviationAlerts = useCallback(async () => {
     try {

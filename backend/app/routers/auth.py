@@ -8,7 +8,7 @@ from ..password_policy import PASSWORD_HINT, validate_password_or_raise
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
-APPROVER_ROLES = {"admin", "superadmin"}
+APPROVER_ROLES = {"admin", "superadmin", "site_admin"}
 
 
 class ForgotPasswordRequest(BaseModel):

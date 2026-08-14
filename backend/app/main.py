@@ -154,14 +154,16 @@ def _ensure_superadmin_role():
         if not role_col:
             return
         role_type = role_col.get("type")
-        enums = getattr(role_type, "enums", None)
-        if enums and "superadmin" not in enums:
+        enums = set(getattr(role_type, "enums", None) or [])
+        required = {"operator", "supervisor", "maintenance", "admin", "site_admin", "quality", "superadmin"}
+        if not enums or not required.issubset(enums):
             with engine.begin() as conn:
                 conn.execute(text(
                     "ALTER TABLE users MODIFY COLUMN role "
-                    "ENUM('operator','supervisor','maintenance','admin','quality','superadmin') NOT NULL"
+                    "ENUM('operator','supervisor','maintenance','admin','site_admin',"
+                    "'quality','superadmin') NOT NULL"
                 ))
-            print("[OK] users.role ENUM updated — added 'superadmin'")
+            print("[OK] users.role ENUM includes site_admin and superadmin")
     except Exception as exc:
         print(f"[WARN] superadmin role migration skipped: {exc}")
         return

@@ -98,7 +98,7 @@ class User(Base):
     id = Column(Integer, primary_key=True, index=True)
     username = Column(String(50), unique=True, nullable=False)
     password_hash = Column(String(255), nullable=False)
-    role = Column(Enum("operator", "supervisor", "maintenance", "admin", "quality", "superadmin"), nullable=False)
+    role = Column(Enum("operator", "supervisor", "maintenance", "admin", "site_admin", "quality", "superadmin"), nullable=False)
     reference_photo_url = Column(String(500), nullable=True)
     # 1 = must set a policy-compliant password once (upgrade); cleared after successful change
     password_must_change = Column(Integer, default=0, nullable=False)

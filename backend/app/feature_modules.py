@@ -72,16 +72,23 @@ def _normalize(modules: dict[str, Any] | None) -> dict[str, bool]:
 def _iter_registry_items() -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     for item in registry_standalone():
-        if not item.get("alwaysEnabled"):
-            items.append(item)
+        items.append(item)
     for group in registry_groups():
-        items.extend(group.get("items") or [])
+        group_roles = group.get("roles")
+        for item in group.get("items") or []:
+            merged = dict(item)
+            if merged.get("roles") is None and group_roles is not None:
+                merged["roles"] = list(group_roles)
+            items.append(merged)
     return items
 
 
 def _default_role_access_for_item(item: dict[str, Any]) -> dict[str, bool]:
-    allowed = set(item.get("roles") or [])
-    return {role: (role in allowed) for role in TOGGLEABLE_ROLES}
+    from .access_matrix import roles_map_from_allowed
+    allowed = item.get("roles")
+    if allowed is None:
+        allowed = list(TOGGLEABLE_ROLES)
+    return roles_map_from_allowed(allowed)
 
 
 def default_feature_role_access() -> dict[str, dict[str, bool]]:
@@ -112,6 +119,8 @@ def _normalize_role_access(stored: dict[str, Any] | None) -> dict[str, dict[str,
         for role, enabled in roles_map.items():
             if role in TOGGLEABLE_ROLES:
                 merged[role] = bool(enabled)
+        if "site_admin" not in roles_map and "admin" in roles_map:
+            merged["site_admin"] = bool(roles_map["admin"])
         out[feature_id] = merged
     return out
 

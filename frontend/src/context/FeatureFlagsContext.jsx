@@ -34,10 +34,17 @@ export function FeatureFlagsProvider({ children }) {
     return api.get('/api/features/')
       .then(r => {
         setModules({ ...getDefaultFeatureModules(), ...(r.data?.modules || {}) });
-        setRoleAccess({
-          ...getDefaultFeatureRoleAccess(),
-          ...getAccessMatrixRoleDefaults(),
-          ...(r.data?.roleAccess || {}),
+        setRoleAccess(() => {
+          const defaults = {
+            ...getDefaultFeatureRoleAccess(),
+            ...getAccessMatrixRoleDefaults(),
+          };
+          const stored = r.data?.roleAccess || {};
+          const merged = { ...defaults };
+          for (const [id, roles] of Object.entries(stored)) {
+            merged[id] = { ...(defaults[id] || {}), ...(roles || {}) };
+          }
+          return merged;
         });
         setAccessMatrix(r.data?.accessMatrix || []);
         setToggleableRoles(r.data?.toggleableRoles || []);

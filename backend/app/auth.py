@@ -79,6 +79,7 @@ def require_role(*roles):
         allowed = set(roles)
         if "admin" in allowed:
             allowed.add("superadmin")
+            allowed.add("site_admin")
         if getattr(current_user, "is_operator_principal", False):
             if "operator" not in allowed:
                 raise HTTPException(status_code=403, detail="Insufficient permissions")

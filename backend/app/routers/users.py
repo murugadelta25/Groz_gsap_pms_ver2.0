@@ -44,7 +44,7 @@ def _unlink_reference_photo_file(photo_url: Optional[str]) -> None:
         pass
 
 
-ROLES = ["operator", "supervisor", "maintenance", "admin", "quality", "superadmin"]
+ROLES = ["operator", "supervisor", "maintenance", "admin", "site_admin", "quality", "superadmin"]
 
 class UserCreate(BaseModel):
     username: str

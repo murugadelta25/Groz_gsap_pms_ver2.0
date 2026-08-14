@@ -7,7 +7,7 @@ import { useWebSocket } from '../api/useWebSocket';
 import PageHeader from '../components/PageHeader';
 import { formatDateTime } from '../utils/dateFormat';
 import { DRAFT_KEYS } from '../utils/formPersistence';
-import usePersistedState from '../hooks/usePersistedState';
+import { hasRole } from '../config/accessMatrix';
 
 const REASONS = [
   { value: 'setting_change', label: 'Setting Change' },
@@ -131,7 +131,7 @@ export default function ModelChange() {
       <PageHeader title="MODEL / SETTING CHANGE" onRefresh={fetchData} />
 
       {/* Request Form */}
-      {(user?.role === 'operator' || user?.role === 'supervisor' || user?.role === 'admin') && (
+      {hasRole(user?.role, 'operator', 'supervisor', 'admin') && (
         <div style={s.card}>
           <h4 style={s.cardTitle}>New Change Request</h4>
           <form onSubmit={submit}>
@@ -304,7 +304,7 @@ export default function ModelChange() {
                 )}
 
                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-                  {r.status === 'pending' && (user?.role === 'supervisor' || user?.role === 'admin') && <>
+                  {r.status === 'pending' && hasRole(user?.role, 'supervisor', 'admin') && <>
                     <button type="button" style={{ ...s.actBtn, background: '#10b981' }} onClick={() => approve(r.id)}>✓ Approve</button>
                     <button type="button" style={{ ...s.actBtn, background: '#ef4444' }} onClick={() => reject(r.id)}>✗ Reject</button>
                   </>}

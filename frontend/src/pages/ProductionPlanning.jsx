@@ -15,6 +15,7 @@ import usePersistedState from '../hooks/usePersistedState';
 import MachineSuggestions from '../components/production-planning/MachineSuggestions';
 import MovePlanModal from '../components/production-planning/MovePlanModal';
 import SearchableSelect from '../components/basic/SearchableSelect';
+import { hasRole } from '../config/accessMatrix';
 import { Link } from 'react-router-dom';
 
 /** Distinct from accent blue — work order links/labels across planning UI */
@@ -840,7 +841,7 @@ export default function ProductionPlanning() {
     }
   };
 
-  const canEdit   = ['supervisor', 'admin', 'superadmin'].includes(user?.role);
+  const canEdit   = hasRole(user?.role, 'supervisor', 'admin');
   const canCreate = user?.role !== 'maintenance';
 
   const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];

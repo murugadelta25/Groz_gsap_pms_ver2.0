@@ -217,7 +217,7 @@ export function isCellReadOnly(approval, col, value, role, reviewingKey, now = n
   }
   if (columnIsMissed(approval, col)) return true;
   if (columnIsFrozen(approval, col)) return true;
-  if (role === 'operator' || role === 'admin') {
+  if (role === 'operator' || role === 'admin' || role === 'superadmin' || role === 'site_admin') {
     return !columnEditableForOperator(approval, col, now);
   }
   return true;
@@ -236,7 +236,7 @@ export function getCellStyle(approval, col, value, s, role, reviewingKey, now = 
   if ((col === ci0 || col === ci1) && !columnEditableForInspector(approval, col, reviewingKey)) {
     return { ...base, background: '#f5f5f5', color: '#78909c' };
   }
-  if ((role === 'operator' || role === 'admin') && !columnEditableForOperator(approval, col, now)) {
+  if ((role === 'operator' || role === 'admin' || role === 'superadmin' || role === 'site_admin') && !columnEditableForOperator(approval, col, now)) {
     return { ...base, background: '#eeeeee', color: '#78909c' };
   }
   if (columnIsFrozen(approval, col) && col !== ci0 && col !== ci1) {

@@ -1,147 +1,92 @@
 /**
  * Feature × role access matrix (User Management).
- * Rows with registryId also drive sidebar / route access via featureRoleAccess.
+ * Page rows are generated from feature-registry.json so every route is listed.
+ * Action rows are extra capabilities (not sidebar pages).
  */
+import registryJson from './feature-registry.json';
+
 export const ACCESS_MATRIX_ROLES = [
   'superadmin',
   'admin',
+  'site_admin',
   'supervisor',
   'operator',
   'maintenance',
   'quality',
 ];
 
-/** @type {{ id: string, feature: string, registryId?: string, roles: Record<string, boolean> }[]} */
-export const ACCESS_MATRIX = [
-  {
-    id: 'dashboard',
-    feature: 'View Dashboard',
-    registryId: 'dashboard',
-    roles: { superadmin: true, admin: true, supervisor: true, operator: true, maintenance: true, quality: false },
-  },
-  {
-    id: 'overview.factory',
-    feature: 'Factory Overview',
-    registryId: 'overview.factory',
-    roles: { superadmin: true, admin: true, supervisor: true, operator: true, maintenance: true, quality: false },
-  },
-  {
-    id: 'overview.line',
-    feature: 'Line Overview',
-    registryId: 'overview.line',
-    roles: { superadmin: true, admin: true, supervisor: true, operator: true, maintenance: true, quality: false },
-  },
-  {
-    id: 'overview.equipment',
-    feature: 'Equipment Overview',
-    registryId: 'overview.equipment',
-    roles: { superadmin: true, admin: true, supervisor: true, operator: true, maintenance: true, quality: false },
-  },
-  {
-    id: 'overview.monitor',
-    feature: 'Monitor Mode',
-    registryId: 'overview.monitor',
-    roles: { superadmin: true, admin: true, supervisor: true, operator: false, maintenance: true, quality: false },
-  },
-  {
-    id: 'production.work_orders',
-    feature: 'Work Orders',
-    registryId: 'production.work_orders',
-    roles: { superadmin: true, admin: true, supervisor: true, operator: true, maintenance: false, quality: false },
-  },
-  {
-    id: 'production.gsap_sync',
-    feature: 'GSAP Sync',
-    registryId: 'production.gsap_sync',
-    roles: { superadmin: true, admin: true, supervisor: true, operator: false, maintenance: false, quality: false },
-  },
-  {
-    id: 'production.planning',
-    feature: 'Production Planning',
-    registryId: 'production.planning',
-    roles: { superadmin: true, admin: true, supervisor: true, operator: true, maintenance: false, quality: false },
-  },
-  {
-    id: 'production.data_entry',
-    feature: 'Data Entry',
-    registryId: 'production.data_entry',
-    roles: { superadmin: true, admin: true, supervisor: true, operator: true, maintenance: false, quality: false },
-  },
-  {
-    id: 'production.model_change',
-    feature: 'Model Change Request',
-    registryId: 'production.model_change',
-    roles: { superadmin: true, admin: true, supervisor: true, operator: true, maintenance: false, quality: false },
-  },
+function rolesMapFromAllowed(allowed) {
+  const set = new Set(allowed || []);
+  const out = {};
+  for (const role of ACCESS_MATRIX_ROLES) {
+    out[role] = set.has(role);
+  }
+  if (set.has('admin') && !set.has('site_admin')) out.site_admin = true;
+  return out;
+}
+
+const CAPABILITY_ROWS = [
   {
     id: 'capability.approve_model_change',
     feature: 'Approve Model Change',
-    roles: { superadmin: true, admin: true, supervisor: true, operator: false, maintenance: false, quality: false },
+    group: 'Actions',
+    kind: 'action',
+    roles: rolesMapFromAllowed(['superadmin', 'admin', 'site_admin', 'supervisor']),
   },
   {
     id: 'capability.raise_breakdown',
     feature: 'Raise Breakdown Ticket',
-    roles: { superadmin: true, admin: true, supervisor: true, operator: true, maintenance: false, quality: false },
+    group: 'Actions',
+    kind: 'action',
+    roles: rolesMapFromAllowed(['superadmin', 'admin', 'site_admin', 'supervisor', 'operator']),
   },
   {
     id: 'capability.ack_breakdown',
     feature: 'Acknowledge Breakdown',
-    roles: { superadmin: true, admin: true, supervisor: false, operator: false, maintenance: true, quality: false },
+    group: 'Actions',
+    kind: 'action',
+    roles: rolesMapFromAllowed(['superadmin', 'admin', 'site_admin', 'maintenance']),
   },
   {
     id: 'capability.resolve_breakdown',
     feature: 'Resolve Breakdown',
-    roles: { superadmin: true, admin: true, supervisor: false, operator: false, maintenance: true, quality: false },
-  },
-  {
-    id: 'alerts.email',
-    feature: 'Email Alerts Config',
-    registryId: 'alerts.email',
-    roles: { superadmin: true, admin: true, supervisor: true, operator: false, maintenance: false, quality: false },
-  },
-  {
-    id: 'settings.machines',
-    feature: 'Machine Configuration',
-    registryId: 'settings.machines',
-    roles: { superadmin: true, admin: true, supervisor: true, operator: false, maintenance: false, quality: false },
-  },
-  {
-    id: 'settings.users',
-    feature: 'User Management',
-    registryId: 'settings.users',
-    roles: { superadmin: true, admin: true, supervisor: false, operator: false, maintenance: false, quality: false },
-  },
-  {
-    id: 'settings.configuration',
-    feature: 'System Configuration',
-    registryId: 'settings.configuration',
-    roles: { superadmin: true, admin: true, supervisor: false, operator: false, maintenance: false, quality: false },
-  },
-  {
-    id: 'settings.factory_setup',
-    feature: 'Factory Setup / Backup',
-    registryId: 'settings.factory_setup',
-    roles: { superadmin: true, admin: false, supervisor: false, operator: false, maintenance: false, quality: false },
-  },
-  {
-    id: 'qc.approvals',
-    feature: 'QC Approvals',
-    registryId: 'qc.approvals',
-    roles: { superadmin: true, admin: true, supervisor: true, operator: false, maintenance: false, quality: true },
-  },
-  {
-    id: 'qc.work_instructions',
-    feature: 'Work Instructions',
-    registryId: 'qc.work_instructions',
-    roles: { superadmin: true, admin: true, supervisor: true, operator: true, maintenance: false, quality: true },
-  },
-  {
-    id: 'operators.my_work_hours',
-    feature: 'My Work Hours',
-    registryId: 'operators.my_work_hours',
-    roles: { superadmin: false, admin: false, supervisor: false, operator: true, maintenance: false, quality: false },
+    group: 'Actions',
+    kind: 'action',
+    roles: rolesMapFromAllowed(['superadmin', 'admin', 'site_admin', 'maintenance']),
   },
 ];
+
+function pageRowsFromRegistry() {
+  const rows = [];
+  for (const item of registryJson.standalone || []) {
+    rows.push({
+      id: item.id,
+      feature: item.label || item.id,
+      registryId: item.id,
+      group: 'Pages',
+      kind: 'page',
+      roles: rolesMapFromAllowed(item.roles || ACCESS_MATRIX_ROLES),
+    });
+  }
+  for (const group of registryJson.groups || []) {
+    const groupLabel = group.label || group.id || 'Pages';
+    for (const item of group.items || []) {
+      const allowed = item.roles || group.roles || [];
+      rows.push({
+        id: item.id,
+        feature: item.label || item.id,
+        registryId: item.id,
+        group: groupLabel,
+        kind: 'page',
+        roles: rolesMapFromAllowed(allowed),
+      });
+    }
+  }
+  return rows;
+}
+
+/** @type {{ id: string, feature: string, registryId?: string, group?: string, kind?: string, roles: Record<string, boolean> }[]} */
+export const ACCESS_MATRIX = [...pageRowsFromRegistry(), ...CAPABILITY_ROWS];
 
 /** Default roleAccess map keyed by matrix id (and registryId when present). */
 export function getAccessMatrixRoleDefaults() {
@@ -153,4 +98,27 @@ export function getAccessMatrixRoleDefaults() {
     }
   }
   return out;
+}
+
+/** Treat Super Admin and Site Admin as Admin wherever Admin is allowed. */
+export function hasRole(userRole, ...allowed) {
+  if (!userRole) return false;
+  const set = new Set(allowed);
+  if (set.has('admin')) {
+    set.add('superadmin');
+    set.add('site_admin');
+  }
+  return set.has(userRole);
+}
+
+export function normalizeAccessMatrixFromApi(apiRows) {
+  if (!Array.isArray(apiRows) || apiRows.length === 0) return ACCESS_MATRIX;
+  return apiRows.map((row) => ({
+    id: row.id,
+    feature: row.label || row.feature,
+    registryId: row.registryId,
+    group: row.group || (row.kind === 'action' ? 'Actions' : 'Pages'),
+    kind: row.kind || (String(row.id || '').startsWith('capability.') ? 'action' : 'page'),
+    roles: { ...rolesMapFromAllowed([]), ...(row.defaultRoles || row.roles || {}) },
+  }));
 }

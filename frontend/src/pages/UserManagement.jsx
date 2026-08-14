@@ -7,13 +7,14 @@ import { useFeatureFlags } from '../context/FeatureFlagsContext';
 import { pageClass } from '../themes/tileHelpers';
 import PageHeader from '../components/PageHeader';
 import { PASSWORD_HINT, passwordPolicyError } from '../utils/passwordPolicy';
-import { ACCESS_MATRIX, ACCESS_MATRIX_ROLES, getAccessMatrixRoleDefaults } from '../config/accessMatrix';
+import { ACCESS_MATRIX_ROLES, getAccessMatrixRoleDefaults, normalizeAccessMatrixFromApi } from '../config/accessMatrix';
 
 const ROLES = ACCESS_MATRIX_ROLES;
 
 const ROLE_CFG = {
   superadmin:  { color: '#dc2626', label: 'Super Admin', icon: '🛡', desc: 'Full access + factory setup, data backup & archive' },
   admin:       { color: '#ef4444', label: 'Admin',       icon: '⚙', desc: 'Full access to all features except factory setup & backup' },
+  site_admin:  { color: '#f97316', label: 'Site Admin',  icon: '🏭', desc: 'Plant-level access (same as Admin). Grant pages in the matrix below, including Monitor Mode.' },
   supervisor:  { color: '#f59e0b', label: 'Supervisor',  icon: '📋', desc: 'Planning, data entry, QC incharge approval' },
   operator:    { color: '#0ea5e9', label: 'Operator', icon: '🔧', desc: 'Optional web/tablet login — shop-floor roster is in Operator Management' },
   maintenance: { color: '#10b981', label: 'Maintenance', icon: '🛠', desc: 'Acknowledge and resolve breakdown tickets' },
@@ -118,7 +119,7 @@ function SectionToggle({ open, onToggle, label, count }) {
 export default function UserManagement() {
   const { theme: t } = useTheme();
   const { user: me } = useAuth();
-  const { roleAccess, reload: reloadFeatures } = useFeatureFlags();
+  const { roleAccess, accessMatrix: apiMatrix, reload: reloadFeatures } = useFeatureFlags();
   const [users, setUsers]       = useState([]);
   const [form, setForm]         = useState(INIT_FORM);
   const [editId, setEditId]     = useState(null);
@@ -141,15 +142,29 @@ export default function UserManagement() {
     setTimeout(() => setMsg({ text: '', ok: true }), 4000);
   };
 
+  const matrixRows = useMemo(
+    () => normalizeAccessMatrixFromApi(apiMatrix),
+    [apiMatrix],
+  );
+
   useEffect(() => {
     const defaults = getAccessMatrixRoleDefaults();
-    const merged = { ...defaults, ...(roleAccess || {}) };
-    // Ensure every matrix row id has a roles map
-    for (const row of ACCESS_MATRIX) {
-      if (!merged[row.id]) merged[row.id] = { ...row.roles };
+    const merged = {};
+    const ids = new Set([
+      ...Object.keys(defaults),
+      ...Object.keys(roleAccess || {}),
+      ...matrixRows.map((row) => row.id),
+    ]);
+    for (const id of ids) {
+      const row = matrixRows.find((r) => r.id === id || r.registryId === id);
+      merged[id] = {
+        ...(row?.roles || {}),
+        ...(defaults[id] || {}),
+        ...((roleAccess || {})[id] || {}),
+      };
     }
     setRoleAccessEdit(merged);
-  }, [roleAccess]);
+  }, [roleAccess, matrixRows]);
 
   const fetchUsers = useCallback(async () => {
     try {
@@ -298,7 +313,7 @@ export default function UserManagement() {
       const current = { ...(prev[featureId] || {}) };
       current[role] = !current[role];
       const next = { ...prev, [featureId]: current };
-      const row = ACCESS_MATRIX.find((r) => r.id === featureId);
+      const row = matrixRows.find((r) => r.id === featureId);
       if (row?.registryId && row.registryId !== featureId) {
         next[row.registryId] = { ...current };
       }
@@ -309,7 +324,7 @@ export default function UserManagement() {
   const setRoleForAllFeatures = (role, enabled) => {
     setRoleAccessEdit((prev) => {
       const next = { ...prev };
-      for (const row of ACCESS_MATRIX) {
+      for (const row of matrixRows) {
         const current = { ...(next[row.id] || { ...row.roles }) };
         current[role] = enabled;
         next[row.id] = current;
@@ -326,7 +341,7 @@ export default function UserManagement() {
       const current = { ...(prev[featureId] || {}) };
       for (const role of ROLES) current[role] = enabled;
       const next = { ...prev, [featureId]: current };
-      const row = ACCESS_MATRIX.find((r) => r.id === featureId);
+      const row = matrixRows.find((r) => r.id === featureId);
       if (row?.registryId && row.registryId !== featureId) {
         next[row.registryId] = { ...current };
       }
@@ -343,7 +358,7 @@ export default function UserManagement() {
     setRoleAccessSaving(true);
     try {
       const payload = {};
-      for (const row of ACCESS_MATRIX) {
+      for (const row of matrixRows) {
         if (roleAccessEdit[row.id]) payload[row.id] = roleAccessEdit[row.id];
         if (row.registryId && roleAccessEdit[row.registryId]) {
           payload[row.registryId] = roleAccessEdit[row.registryId];
@@ -724,9 +739,9 @@ export default function UserManagement() {
         {showMatrix && (
           <>
             <p style={{ color: t.textMuted, fontSize: 12, margin: '0 0 10px', lineHeight: 1.45 }}>
-              Tick roles for each feature. Under each checkbox, <strong>Default</strong> shows the system baseline
-              (✓ / —) as a reference. Cells that differ from default are highlighted. Column header selects a role
-              for all features; row checkbox selects all roles for that feature.
+              Every page is listed. Tick a role to show that page in the sidebar (and App Bar for Monitor Mode).
+              Unticked pages are hidden for that role. Actions at the bottom are buttons, not menu pages.
+              Under each checkbox, <strong>Default</strong> shows the system baseline (✓ / —).
             </p>
             <div style={{
               display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center',
@@ -767,8 +782,8 @@ export default function UserManagement() {
                   <tr>
                     <th style={s.th}>Feature</th>
                     {ROLES.map((r) => {
-                      const allOn = ACCESS_MATRIX.every((row) => !!roleAccessEdit[row.id]?.[r]);
-                      const someOn = ACCESS_MATRIX.some((row) => !!roleAccessEdit[row.id]?.[r]);
+                      const allOn = matrixRows.every((row) => !!roleAccessEdit[row.id]?.[r]);
+                      const someOn = matrixRows.some((row) => !!roleAccessEdit[row.id]?.[r]);
                       return (
                         <th key={r} style={{ ...s.th, color: ROLE_CFG[r].color, textAlign: 'center' }}>
                           <label
@@ -796,65 +811,88 @@ export default function UserManagement() {
                   </tr>
                 </thead>
                 <tbody>
-                  {ACCESS_MATRIX.map((row) => {
+                  {matrixRows.map((row, idx) => {
                     const rolesMap = roleAccessEdit[row.id] || row.roles;
                     const defaults = row.roles || {};
                     const allRolesOn = ROLES.every((r) => !!rolesMap[r]);
                     const someRolesOn = ROLES.some((r) => !!rolesMap[r]);
+                    const prevGroup = idx > 0 ? matrixRows[idx - 1].group : null;
+                    const showGroup = row.group && row.group !== prevGroup;
                     return (
-                      <tr key={row.id}>
-                        <td style={{ ...s.td, fontWeight: 500, color: t.text }}>
-                          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
-                            <input
-                              type="checkbox"
-                              checked={allRolesOn}
-                              ref={(el) => { if (el) el.indeterminate = someRolesOn && !allRolesOn; }}
-                              onChange={(e) => setAllRolesForFeature(row.id, e.target.checked)}
-                              title="Select / clear all roles for this feature"
-                            />
-                            {row.feature}
-                          </label>
-                        </td>
-                        {ROLES.map((r) => {
-                          const current = !!rolesMap[r];
-                          const defOn = !!defaults[r];
-                          const changed = current !== defOn;
-                          return (
+                      <Fragment key={row.id}>
+                        {showGroup && (
+                          <tr>
                             <td
-                              key={r}
+                              colSpan={1 + ROLES.length}
                               style={{
                                 ...s.td,
-                                textAlign: 'center',
-                                background: changed ? `${t.accent}18` : 'transparent',
-                                verticalAlign: 'middle',
+                                background: t.surface2,
+                                color: t.accent,
+                                fontWeight: 700,
+                                fontSize: 12,
+                                letterSpacing: '0.04em',
+                                textTransform: 'uppercase',
                               }}
-                              title={
-                                changed
-                                  ? `Changed from default (${defOn ? 'on' : 'off'})`
-                                  : `Default: ${defOn ? 'allowed' : 'not allowed'}`
-                              }
                             >
-                              <div style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
-                                <input
-                                  type="checkbox"
-                                  checked={current}
-                                  onChange={() => toggleFeatureRole(row.id, r)}
-                                  aria-label={`${row.feature} — ${ROLE_CFG[r].label}`}
-                                />
-                                <span style={{
-                                  fontSize: 10,
-                                  lineHeight: 1.2,
-                                  color: defOn ? '#10b981' : t.textFaint,
-                                  fontWeight: defOn ? 700 : 500,
-                                }}>
-                                  {defOn ? '✓' : '—'}
-                                  <span style={{ color: t.textFaint, fontWeight: 400 }}> def</span>
-                                </span>
-                              </div>
+                              {row.group}
                             </td>
-                          );
-                        })}
-                      </tr>
+                          </tr>
+                        )}
+                        <tr>
+                          <td style={{ ...s.td, fontWeight: 500, color: t.text }}>
+                            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                              <input
+                                type="checkbox"
+                                checked={allRolesOn}
+                                ref={(el) => { if (el) el.indeterminate = someRolesOn && !allRolesOn; }}
+                                onChange={(e) => setAllRolesForFeature(row.id, e.target.checked)}
+                                title="Select / clear all roles for this feature"
+                              />
+                              {row.feature}
+                            </label>
+                          </td>
+                          {ROLES.map((r) => {
+                            const current = !!rolesMap[r];
+                            const defOn = !!defaults[r];
+                            const changed = current !== defOn;
+                            const cfg = ROLE_CFG[r] || {};
+                            return (
+                              <td
+                                key={r}
+                                style={{
+                                  ...s.td,
+                                  textAlign: 'center',
+                                  background: changed ? `${t.accent}18` : 'transparent',
+                                  verticalAlign: 'middle',
+                                }}
+                                title={
+                                  changed
+                                    ? `Changed from default (${defOn ? 'on' : 'off'})`
+                                    : `Default: ${defOn ? 'allowed' : 'not allowed'}`
+                                }
+                              >
+                                <div style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
+                                  <input
+                                    type="checkbox"
+                                    checked={current}
+                                    onChange={() => toggleFeatureRole(row.id, r)}
+                                    aria-label={`${row.feature} — ${cfg.label || r}`}
+                                  />
+                                  <span style={{
+                                    fontSize: 10,
+                                    lineHeight: 1.2,
+                                    color: defOn ? '#10b981' : t.textFaint,
+                                    fontWeight: defOn ? 700 : 500,
+                                  }}>
+                                    {defOn ? '✓' : '—'}
+                                    <span style={{ color: t.textFaint, fontWeight: 400 }}> def</span>
+                                  </span>
+                                </div>
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      </Fragment>
                     );
                   })}
                 </tbody>
