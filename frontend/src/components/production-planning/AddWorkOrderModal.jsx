@@ -3,10 +3,13 @@ import { useNavigate } from 'react-router-dom';
 import api from '../../api/client';
 import { partToPlanningVariant } from '../../utils/partVariant';
 import { useConfig } from '../../context/ConfigContext';
+import { formatCtSeconds } from '../../utils/cycleTime';
 import {
   estimateWorkOrderPeriod,
   parseGsapMinutes,
   formatDurationMinutes,
+  partCycleTimeSeconds,
+  partCycleTimeMinutes,
 } from '../../utils/gsapPeriodEstimate';
 import SearchableSelect from '../basic/SearchableSelect';
 
@@ -169,25 +172,46 @@ export default function AddWorkOrderModal({ t, parts, onClose, onCreated, onUpda
     () => gsapRows.find((r) => String(r.id) === String(form.gsap_sync_id)) || null,
     [gsapRows, form.gsap_sync_id],
   );
+  const selectedPart = useMemo(
+    () => parts.find((p) => String(p.id) === String(form.part_id)) || null,
+    [parts, form.part_id],
+  );
   const gsapCtMinutes = parseGsapMinutes(selectedGsap?.machine_time);
+  const partCtSeconds = partCycleTimeSeconds(selectedPart);
+  const partCtMinutes = partCycleTimeMinutes(selectedPart);
+  const periodCt = form.part_source === 'gsap'
+    ? { minutes: gsapCtMinutes, label: gsapCtMinutes ? `${gsapCtMinutes} min CT` : null }
+    : { minutes: partCtMinutes, label: partCtSeconds ? `${formatCtSeconds(partCtSeconds)} s CT` : null };
 
   useEffect(() => {
-    if (form.part_source !== 'gsap' || !form.gsap_sync_id) {
+    const usingGsap = form.part_source === 'gsap' && form.gsap_sync_id;
+    const usingPart = form.part_source === 'part_master' && form.part_id;
+    if (!usingGsap && !usingPart) {
       setPeriodHint('');
       return;
     }
     const qty = parseInt(form.target_qty, 10);
-    if (!qty || !gsapCtMinutes) {
-      setPeriodHint(selectedGsap
-        ? `GSAP CT ${selectedGsap.machine_time || '—'} min. Enter Target Qty to auto-fill Period Start / End from shift hours.`
-        : '');
+    const ctMinutes = periodCt.minutes;
+    if (!qty || !ctMinutes) {
+      if (usingGsap) {
+        setPeriodHint(selectedGsap
+          ? `GSAP CT ${selectedGsap.machine_time || '—'} min. Enter Target Qty to auto-fill Period Start / End from shift hours.`
+          : '');
+      } else if (!partCtSeconds) {
+        setPeriodHint('This part has no cycle time. Set Process Time and Loading/Unloading in Part Master to auto-fill Period End.');
+      } else {
+        setPeriodHint(
+          `Part CT ${formatCtSeconds(partCtSeconds)} s (process + L&U). Enter Target Qty to auto-fill Period Start / End from shift hours.`,
+        );
+      }
       return;
     }
     const est = estimateWorkOrderPeriod({
       now: new Date(),
       config,
-      ctMinutes: gsapCtMinutes,
+      ctMinutes,
       qty,
+      ctLabel: periodCt.label,
     });
     if (!est) {
       setPeriodHint('');
@@ -203,7 +227,19 @@ export default function AddWorkOrderModal({ t, parts, onClose, onCreated, onUpda
         ? p
         : { ...p, start_date: est.startDate, end_date: est.endDate }
     ));
-  }, [form.part_source, form.gsap_sync_id, form.target_qty, gsapCtMinutes, selectedGsap, config]);
+  }, [
+    form.part_source,
+    form.gsap_sync_id,
+    form.part_id,
+    form.target_qty,
+    gsapCtMinutes,
+    partCtSeconds,
+    partCtMinutes,
+    periodCt.minutes,
+    periodCt.label,
+    selectedGsap,
+    config,
+  ]);
 
   const selectedOutstandingQty = outstanding
     .filter((o) => selectedOutstanding.includes(o.id))
@@ -328,13 +364,16 @@ export default function AddWorkOrderModal({ t, parts, onClose, onCreated, onUpda
       setSelectedOutstanding([]);
       return;
     }
-    setForm((p) => ({
-      ...p,
-      part_id: String(partId),
-      model_variant: partToPlanningVariant(part),
-    }));
-    setLoadingTools(true);
-    setMsg('');
+      setForm((p) => ({
+        ...p,
+        part_id: String(partId),
+        model_variant: partToPlanningVariant(part),
+      }));
+      const ctSec = partCycleTimeSeconds(part);
+      setLoadingTools(true);
+      setMsg(ctSec
+        ? `Part CT: ${formatCtSeconds(ctSec)} s (process + L&U). Period Start/End auto-fill from Target Qty and shift hours.`
+        : 'This part has no cycle time. Set Process Time and Loading/Unloading in Part Master to auto-fill Period End.');
     try {
       const { data: detail } = await api.get(`/api/parts/${partId}`);
       let mapped = mapPartToolsToSpares(detail.tools_parameters);
@@ -592,9 +631,9 @@ export default function AddWorkOrderModal({ t, parts, onClose, onCreated, onUpda
             <Field label="Target Qty (pcs) *" t={t}>
               <input style={inp} type="number" min="1" required
                 value={form.target_qty} onChange={(e) => setForm((p) => ({ ...p, target_qty: e.target.value }))} />
-              {form.part_source === 'gsap' && gsapCtMinutes && form.target_qty && (
+              {periodCt.minutes && form.target_qty && (
                 <span style={{ fontSize: 11, color: t.textDim }}>
-                  {form.target_qty} pcs × {gsapCtMinutes} min CT = {formatDurationMinutes(gsapCtMinutes * Number(form.target_qty || 0))}
+                  {form.target_qty} pcs × {periodCt.label} = {formatDurationMinutes(periodCt.minutes * Number(form.target_qty || 0))}
                 </span>
               )}
             </Field>

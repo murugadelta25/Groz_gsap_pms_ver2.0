@@ -1,4 +1,4 @@
-/** Estimate work-order period from GSAP cycle time, target qty, and factory shifts. */
+/** Estimate work-order period from cycle time, target qty, and factory shift hours. */
 
 export function toLocalISODate(d) {
   const y = d.getFullYear();
@@ -12,6 +12,20 @@ export function parseGsapMinutes(raw) {
   const n = parseFloat(String(raw).replace(/,/g, '').trim());
   if (!Number.isFinite(n) || n <= 0) return null;
   return n;
+}
+
+/** Part Master cycle time is stored in seconds (process_time + loading_unloading). */
+export function partCycleTimeSeconds(part) {
+  if (!part) return null;
+  const stored = Number(part.cycle_time);
+  if (Number.isFinite(stored) && stored > 0) return stored;
+  const sum = (Number(part.process_time) || 0) + (Number(part.loading_unloading) || 0);
+  return sum > 0 ? sum : null;
+}
+
+export function partCycleTimeMinutes(part) {
+  const sec = partCycleTimeSeconds(part);
+  return sec == null ? null : sec / 60;
 }
 
 export function formatDurationMinutes(mins) {
@@ -62,6 +76,7 @@ export function estimateWorkOrderPeriod({
   config,
   ctMinutes,
   qty,
+  ctLabel,
 } = {}) {
   const pieces = Number(qty);
   const ct = Number(ctMinutes);
@@ -69,6 +84,7 @@ export function estimateWorkOrderPeriod({
     return null;
   }
   const needed = pieces * ct;
+  const ctText = ctLabel || `${ct} min CT`;
   const shifts = enabledShifts(config);
   if (!shifts.length) {
     const start = toLocalISODate(now);
@@ -77,7 +93,7 @@ export function estimateWorkOrderPeriod({
       endDate: start,
       neededMinutes: needed,
       finishAt: now,
-      note: `${pieces} pcs × ${ct} min CT = ${formatDurationMinutes(needed)} (no shift calendar — same day)`,
+      note: `${pieces} pcs × ${ctText} = ${formatDurationMinutes(needed)} (no shift calendar — same day)`,
     };
   }
 
@@ -122,7 +138,7 @@ export function estimateWorkOrderPeriod({
   const endDate = toLocalISODate(finishAt);
   const note = remaining > 0
     ? `Need ${formatDurationMinutes(needed)} but shift calendar could not cover the qty.`
-    : `${pieces} pcs × ${ct} min CT = ${formatDurationMinutes(needed)}, from current shift to ${endDate}`;
+    : `${pieces} pcs × ${ctText} = ${formatDurationMinutes(needed)}, from current shift to ${endDate}`;
 
   return {
     startDate,
