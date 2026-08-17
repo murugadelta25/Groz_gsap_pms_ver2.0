@@ -1,0 +1,9 @@
+{
+  "filename": "pms_backup_20260814_175337.sql.gz",
+  "meta_filename": "pms_backup_20260814_175337.sql.gz.meta.json",
+  "method": "sql",
+  "triggered_by": "uploaded",
+  "created_at": "2026-08-14T17:53:37.640101",
+  "size_bytes": 141872,
+  "size_display": "138.5 KB"
+}
