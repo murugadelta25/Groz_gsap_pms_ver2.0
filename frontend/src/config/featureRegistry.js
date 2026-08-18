@@ -82,6 +82,8 @@ export function canRoleAccessFeature(featureId, role, modules, roleAccess) {
   if (access && typeof access === 'object') {
     if (role in access) return access[role] === true;
     if (role === 'site_admin' && access.admin === true) return true;
+    // Capability rows are not in the page registry. Missing key = not granted.
+    if (String(featureId).startsWith('capability.')) return false;
   }
   const item = findRegistryItem(featureId);
   if (!item?.roles) return role === 'superadmin' || role === 'admin' || role === 'site_admin';

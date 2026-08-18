@@ -42,6 +42,7 @@ def login(form: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get
 
 
 @router.post("/forgot-password")
+@router.post("/forgot_password")
 def forgot_password(data: ForgotPasswordRequest, db: Session = Depends(get_db)):
     """
     Reset any user's password from the login screen.

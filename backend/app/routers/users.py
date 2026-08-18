@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.orm import Session
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, DataError, OperationalError
 from pydantic import BaseModel
 from typing import Optional
 from pathlib import Path
@@ -18,6 +18,7 @@ from ..models import (
     get_db,
 )
 from ..auth import hash_password, get_current_user, require_role, verify_password
+from ..password_policy import PASSWORD_HINT, validate_password_or_raise
 from ..upload_limits import MAX_IMAGE_BYTES, save_upload_limited
 from ..role_definitions import role_exists
 
@@ -51,7 +52,12 @@ def _validate_user_role(db: Session, role: str) -> str:
     role = (role or "").strip().lower()
     if not role:
         raise HTTPException(400, "role is required")
-    if not role_exists(db, role):
+    try:
+        known = role_exists(db, role)
+    except Exception as exc:
+        print(f"[users] role_exists failed for '{role}': {exc}")
+        known = role in ROLES
+    if not known:
         raise HTTPException(400, f"Unknown role '{role}'. Create it under User Management → Roles first.")
     return role
 
@@ -70,8 +76,22 @@ class PasswordChange(BaseModel):
 
 @router.get("/")
 def list_users(db: Session = Depends(get_db), _=Depends(get_current_user)):
-    users = db.query(User).order_by(User.role, User.username).all()
-    return [{"id": u.id, "username": u.username, "role": u.role, "reference_photo_url": u.reference_photo_url, "has_reference_photo": bool(u.reference_photo_url)} for u in users]
+    try:
+        users = db.query(User).order_by(User.role, User.username).all()
+        return [
+            {
+                "id": u.id,
+                "username": u.username,
+                "role": u.role,
+                "reference_photo_url": u.reference_photo_url,
+                "has_reference_photo": bool(u.reference_photo_url),
+            }
+            for u in users
+        ]
+    except Exception as exc:
+        db.rollback()
+        print(f"[users] list_users failed: {exc}")
+        raise HTTPException(500, f"Failed to load users: {exc}") from exc
 
 @router.get("/me")
 def get_me(current=Depends(get_current_user)):
@@ -102,7 +122,17 @@ def create_user(data: UserCreate, db: Session = Depends(get_db),
         password_must_change=0,
     )
     db.add(u)
-    db.commit()
+    try:
+        db.commit()
+    except (IntegrityError, DataError, OperationalError) as exc:
+        db.rollback()
+        print(f"[users] create_user commit failed: {exc}")
+        raise HTTPException(
+            400,
+            "Could not create this user. If you assigned a new role, restart the backend "
+            "so users.role is VARCHAR, then try again. "
+            f"Detail: {getattr(exc, 'orig', exc)}",
+        ) from exc
     db.refresh(u)
     return {"id": u.id, "username": u.username, "role": u.role}
 
@@ -125,7 +155,17 @@ def update_user(user_id: int, data: UserUpdate, db: Session = Depends(get_db),
         validate_password_or_raise(data.password)
         u.password_hash = hash_password(data.password)
         u.password_must_change = 0
-    db.commit()
+    try:
+        db.commit()
+    except (IntegrityError, DataError, OperationalError) as exc:
+        db.rollback()
+        print(f"[users] update_user commit failed: {exc}")
+        raise HTTPException(
+            400,
+            "Could not save this user. If you assigned a new role, restart the backend "
+            "so users.role is VARCHAR, then try again. "
+            f"Detail: {getattr(exc, 'orig', exc)}",
+        ) from exc
     return {"id": u.id, "username": u.username, "role": u.role, "reference_photo_url": u.reference_photo_url}
 
 @router.post("/{user_id}/reference-photo")

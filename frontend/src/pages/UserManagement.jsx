@@ -7,20 +7,53 @@ import { useFeatureFlags } from '../context/FeatureFlagsContext';
 import { pageClass } from '../themes/tileHelpers';
 import PageHeader from '../components/PageHeader';
 import { PASSWORD_HINT, passwordPolicyError } from '../utils/passwordPolicy';
-import { ACCESS_MATRIX_ROLES, getAccessMatrixRoleDefaults, normalizeAccessMatrixFromApi } from '../config/accessMatrix';
+import { getAccessMatrixRoleDefaults, mergeAccessMatrixRoles, normalizeAccessMatrixFromApi } from '../config/accessMatrix';
 
 const FALLBACK_ROLE_CFG = {
-  superadmin:  { color: '#dc2626', label: 'Super Admin', icon: '🛡', desc: 'Full access + factory setup, data backup & archive' },
-  admin:       { color: '#ef4444', label: 'Admin',       icon: '⚙', desc: 'Full access to all features except factory setup & backup' },
-  site_admin:  { color: '#f97316', label: 'Site Admin',  icon: '🏭', desc: 'Plant-level access — grant pages in the matrix below' },
-  supervisor:  { color: '#f59e0b', label: 'Supervisor',  icon: '📋', desc: 'Planning, data entry, QC incharge approval' },
-  operator:    { color: '#0ea5e9', label: 'Operator', icon: '🔧', desc: 'Optional web/tablet login' },
-  maintenance: { color: '#10b981', label: 'Maintenance', icon: '🛠', desc: 'Acknowledge and resolve breakdown tickets' },
-  quality:     { color: '#8b5cf6', label: 'Quality',     icon: '✓', desc: 'QC inspection sheet — inspector approval' },
+  superadmin:  { color: '#dc2626', label: 'Super Admin', icon: '🛡', desc: 'Full access + factory setup, data backup & archive', isSystem: true },
+  admin:       { color: '#ef4444', label: 'Admin',       icon: '⚙', desc: 'Full access to all features except factory setup & backup', isSystem: true },
+  site_admin:  { color: '#f97316', label: 'Site Admin',  icon: '🏭', desc: 'Plant-level access — grant pages in the matrix below', isSystem: true },
+  supervisor:  { color: '#f59e0b', label: 'Supervisor',  icon: '📋', desc: 'Planning, data entry, QC incharge approval', isSystem: true },
+  operator:    { color: '#0ea5e9', label: 'Operator', icon: '🔧', desc: 'Optional web/tablet login', isSystem: true },
+  maintenance: { color: '#10b981', label: 'Maintenance', icon: '🛠', desc: 'Acknowledge and resolve breakdown tickets', isSystem: true },
+  quality:     { color: '#8b5cf6', label: 'Quality',     icon: '✓', desc: 'QC inspection sheet — inspector approval', isSystem: true },
 };
 
 const INIT_FORM = { username: '', password: '', role: 'supervisor' };
 const INIT_ROLE_FORM = { slug: '', label: '', description: '', color: '#64748b', icon: '👤', inheritsSlug: '' };
+
+const ROLE_ICON_OPTIONS = [
+  { icon: '👤', label: 'Person' },
+  { icon: '👷', label: 'Operator' },
+  { icon: '🔧', label: 'Wrench' },
+  { icon: '🛠', label: 'Tools' },
+  { icon: '⚙', label: 'Settings' },
+  { icon: '🛡', label: 'Shield' },
+  { icon: '🏭', label: 'Plant' },
+  { icon: '📋', label: 'Clipboard' },
+  { icon: '✓', label: 'Quality' },
+  { icon: '🔍', label: 'Inspect' },
+  { icon: '📊', label: 'Reports' },
+  { icon: '📈', label: 'Trend' },
+  { icon: '📦', label: 'Parts' },
+  { icon: '📝', label: 'Plan' },
+  { icon: '📅', label: 'Schedule' },
+  { icon: '⏱', label: 'Time' },
+  { icon: '🚨', label: 'Alert' },
+  { icon: '🔴', label: 'Breakdown' },
+  { icon: '📧', label: 'Email' },
+  { icon: '👔', label: 'Management' },
+  { icon: '🧑‍💼', label: 'Lead' },
+  { icon: '🧑‍🔬', label: 'Lab' },
+  { icon: '🚛', label: 'Stores' },
+  { icon: '💡', label: 'Idea' },
+];
+
+function permissionType(row) {
+  if (row.kind === 'edit') return { text: 'EDIT', color: '#0ea5e9', hint: 'Create / change records on this screen' };
+  if (row.kind === 'action') return { text: 'ACTION', color: '#f59e0b', hint: 'Specific button (raise, approve, ack, resolve…)' };
+  return { text: 'VIEW', color: '#10b981', hint: 'Show this page in the sidebar (read-only unless EDIT/ACTION is also ticked)' };
+}
 
 function PasswordInput({ value, onChange, placeholder = '', required = false, style = {} }) {
   const [visible, setVisible] = useState(false);
@@ -138,12 +171,14 @@ export default function UserManagement() {
   const [roleForm, setRoleForm] = useState(INIT_ROLE_FORM);
   const [roleSaving, setRoleSaving] = useState(false);
   const [matrixHighlightRole, setMatrixHighlightRole] = useState(null);
+  const [copyFromRole, setCopyFromRole] = useState('');
+  const [copyToRole, setCopyToRole] = useState('');
   const matrixTableRef = useRef(null);
   const editFormRef = useRef(null);
   const addFormRef = useRef(null);
 
   const roleSlugs = useMemo(
-    () => (toggleableRoles?.length ? toggleableRoles : ACCESS_MATRIX_ROLES),
+    () => mergeAccessMatrixRoles(toggleableRoles),
     [toggleableRoles],
   );
 
@@ -332,11 +367,24 @@ export default function UserManagement() {
   const toggleFeatureRole = (featureId, role) => {
     setRoleAccessEdit((prev) => {
       const current = { ...(prev[featureId] || {}) };
-      current[role] = !current[role];
-      const next = { ...prev, [featureId]: current };
+      const enabled = !current[role];
+      const next = { ...prev };
+      const setOne = (id, value) => {
+        const cur = { ...(next[id] || {}) };
+        cur[role] = value;
+        next[id] = cur;
+        const r = matrixRows.find((x) => x.id === id);
+        if (r?.registryId && r.registryId !== id) next[r.registryId] = { ...cur };
+      };
+      setOne(featureId, enabled);
       const row = matrixRows.find((r) => r.id === featureId);
-      if (row?.registryId && row.registryId !== featureId) {
-        next[row.registryId] = { ...current };
+      if (row?.kind === 'page' && !enabled) {
+        for (const child of matrixRows.filter((r) => r.parentId === featureId)) {
+          setOne(child.id, false);
+        }
+      }
+      if (row?.parentId && enabled) {
+        setOne(row.parentId, true);
       }
       return next;
     });
@@ -359,15 +407,48 @@ export default function UserManagement() {
 
   const setAllRolesForFeature = (featureId, enabled) => {
     setRoleAccessEdit((prev) => {
-      const current = { ...(prev[featureId] || {}) };
-      for (const role of roleSlugs) current[role] = enabled;
-      const next = { ...prev, [featureId]: current };
+      const next = { ...prev };
+      const setAll = (id, value) => {
+        const current = { ...(next[id] || {}) };
+        for (const role of roleSlugs) current[role] = value;
+        next[id] = current;
+        const row = matrixRows.find((r) => r.id === id);
+        if (row?.registryId && row.registryId !== id) next[row.registryId] = { ...current };
+      };
+      setAll(featureId, enabled);
       const row = matrixRows.find((r) => r.id === featureId);
-      if (row?.registryId && row.registryId !== featureId) {
-        next[row.registryId] = { ...current };
+      if (row?.kind === 'page' && !enabled) {
+        for (const child of matrixRows.filter((r) => r.parentId === featureId)) {
+          setAll(child.id, false);
+        }
+      }
+      if (row?.parentId && enabled) {
+        setAll(row.parentId, true);
       }
       return next;
     });
+  };
+
+  const applyCopyRoleAccess = () => {
+    if (!copyFromRole || !copyToRole || copyFromRole === copyToRole) {
+      flash('Choose two different roles to copy', false);
+      return;
+    }
+    setRoleAccessEdit((prev) => {
+      const next = { ...prev };
+      for (const row of matrixRows) {
+        const current = { ...(next[row.id] || { ...row.roles }) };
+        current[copyToRole] = !!current[copyFromRole];
+        next[row.id] = current;
+        if (row.registryId && row.registryId !== row.id) {
+          next[row.registryId] = { ...current };
+        }
+      }
+      return next;
+    });
+    const fromLabel = roleCfgMap[copyFromRole]?.label || copyFromRole;
+    const toLabel = roleCfgMap[copyToRole]?.label || copyToRole;
+    flash(`Copied ${fromLabel} ticks onto ${toLabel} — click Save access matrix`);
   };
 
   const resetRoleAccessToDefaults = () => {
@@ -384,13 +465,14 @@ export default function UserManagement() {
   const openEditRole = (slug, e) => {
     e?.stopPropagation?.();
     const r = (appRoles || []).find((x) => x.slug === slug) || {};
+    const fb = FALLBACK_ROLE_CFG[slug] || {};
     setRoleEditSlug(slug);
     setRoleForm({
       slug: r.slug || slug,
-      label: r.label || slug,
-      description: r.description || '',
-      color: r.color || '#64748b',
-      icon: r.icon || '👤',
+      label: r.label || fb.label || slug,
+      description: r.description || fb.desc || '',
+      color: r.color || fb.color || '#64748b',
+      icon: r.icon || fb.icon || '👤',
       inheritsSlug: r.inheritsSlug || '',
     });
     setShowRoleForm(true);
@@ -420,7 +502,7 @@ export default function UserManagement() {
         });
         flash('✅ Role updated');
       } else {
-        await api.post('/api/roles/', {
+        const created = await api.post('/api/roles/', {
           slug: roleForm.slug.trim() || undefined,
           label: roleForm.label.trim(),
           description: roleForm.description,
@@ -428,7 +510,15 @@ export default function UserManagement() {
           icon: roleForm.icon,
           inheritsSlug: roleForm.inheritsSlug || null,
         });
-        flash('✅ Role created — set page access in the Feature Access Matrix below, then Save');
+        const newSlug = created.data?.slug;
+        flash('✅ Role created — tick VIEW / EDIT / ACTION in the Feature Access Matrix below, then Save');
+        closeRoleForm();
+        await reloadFeatures();
+        if (newSlug) {
+          setShowMatrix(true);
+          focusRoleInMatrix(newSlug);
+        }
+        return;
       }
       closeRoleForm();
       await reloadFeatures();
@@ -605,7 +695,8 @@ export default function UserManagement() {
         </div>
         <p style={{ color: t.textMuted, fontSize: 12, margin: '0 0 12px', lineHeight: 1.45 }}>
           Page permissions for each role are configured in the <strong>Feature Access Matrix</strong> below.
-          Create a role here, tick the pages that role may see, then click <strong>Save access matrix</strong>.
+          Tick <strong>View</strong> to show a page, then tick <strong>Create / Edit</strong> or action rows
+          (raise breakdown, approve, etc.) for that role. Click <strong>Save access matrix</strong>.
         </p>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 12 }}>
           <button
@@ -707,10 +798,34 @@ export default function UserManagement() {
                 <input style={s.inp} value={roleForm.description}
                   onChange={(e) => setRoleForm((p) => ({ ...p, description: e.target.value }))} />
               </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                <label style={s.label}>Icon</label>
-                <input style={{ ...s.inp, width: 56 }} maxLength={4} value={roleForm.icon}
-                  onChange={(e) => setRoleForm((p) => ({ ...p, icon: e.target.value }))} />
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 280, flex: '1 1 100%' }}>
+                <label style={s.label}>Icon — click one</label>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, maxWidth: 520 }}>
+                  {ROLE_ICON_OPTIONS.map((opt) => {
+                    const selected = roleForm.icon === opt.icon;
+                    return (
+                      <button
+                        key={opt.label}
+                        type="button"
+                        title={opt.label}
+                        onClick={() => setRoleForm((p) => ({ ...p, icon: opt.icon }))}
+                        style={{
+                          width: 36,
+                          height: 36,
+                          borderRadius: 8,
+                          fontSize: 18,
+                          lineHeight: 1,
+                          cursor: 'pointer',
+                          background: selected ? `${roleForm.color}33` : t.surface2,
+                          border: selected ? `2px solid ${roleForm.color}` : `1px solid ${t.border}`,
+                          color: t.text,
+                        }}
+                      >
+                        {opt.icon}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                 <label style={s.label}>Color</label>
@@ -722,7 +837,7 @@ export default function UserManagement() {
                   <label style={s.label}>Copy access from</label>
                   <select style={s.inp} value={roleForm.inheritsSlug}
                     onChange={(e) => setRoleForm((p) => ({ ...p, inheritsSlug: e.target.value }))}>
-                    <option value="">None (all pages off)</option>
+                    <option value="">None (all pages off — tick View / Edit below)</option>
                     {roleSlugs.map((slug) => (
                       <option key={slug} value={slug}>{roleCfgMap[slug]?.label || slug}</option>
                     ))}
@@ -937,24 +1052,55 @@ export default function UserManagement() {
         />
         {showMatrix && (
           <>
-            <p style={{ color: t.textMuted, fontSize: 12, margin: '0 0 10px', lineHeight: 1.45 }}>
-              Every page is listed. Tick a role to show that page in the sidebar (and App Bar for Monitor Mode).
-              Unticked pages are hidden for that role. Actions at the bottom are buttons, not menu pages.
-              Under each checkbox, <strong>Default</strong> shows the system baseline (✓ / —).
+            <p style={{ color: t.textMuted, fontSize: 12, margin: '0 0 10px', lineHeight: 1.5 }}>
+              <strong>↳</strong> means a child row under the page above it (not a separate menu).
+              Example: <strong>Model Change</strong> is VIEW (open the page).
+              <strong>↳ Raise Model Change</strong> ACTION = the “New Change Request” form.
+              <strong>↳ Approve Model Change</strong> ACTION = the ✓ Approve / ✗ Reject buttons a supervisor uses
+              before a part/setting change can start.
             </p>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 12 }}>
+              {[
+                { text: 'VIEW', color: '#10b981', desc: 'Show the page in the sidebar (read-only)' },
+                { text: 'EDIT', color: '#0ea5e9', desc: 'Create / change (Add Work Order, New Plan, Save Entry…)' },
+                { text: 'ACTION', color: '#f59e0b', desc: 'One button on that page — e.g. Approve or Raise' },
+              ].map((chip) => (
+                <div
+                  key={chip.text}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 8,
+                    padding: '6px 10px', borderRadius: 8,
+                    border: `1px solid ${chip.color}66`, background: `${chip.color}14`,
+                    fontSize: 12, color: t.text, maxWidth: 360,
+                  }}
+                >
+                  <span style={{
+                    fontSize: 10, fontWeight: 800, letterSpacing: '0.04em', color: chip.color,
+                  }}>{chip.text}</span>
+                  <span style={{ color: t.textMuted }}>{chip.desc}</span>
+                </div>
+              ))}
+            </div>
             <div style={{
               display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center',
               justifyContent: 'space-between', marginBottom: 12,
             }}>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 14, fontSize: 11, color: t.textMuted }}>
-                <span><strong style={{ color: t.text }}>Checkbox</strong> = current access</span>
-                <span><strong style={{ color: '#10b981' }}>✓</strong> / <strong>—</strong> under it = default reference</span>
-                <span style={{
-                  padding: '2px 8px', borderRadius: 4,
-                  background: `${t.accent}22`, border: `1px solid ${t.accent}55`,
-                }}>
-                  Highlighted = changed from default
-                </span>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center', fontSize: 12, color: t.textMuted }}>
+                <span>Copy ticks</span>
+                <select style={s.inp} value={copyFromRole} onChange={(e) => setCopyFromRole(e.target.value)}>
+                  <option value="">From role…</option>
+                  {roleSlugs.map((slug) => (
+                    <option key={slug} value={slug}>{roleCfgMap[slug]?.label || slug}</option>
+                  ))}
+                </select>
+                <span>onto</span>
+                <select style={s.inp} value={copyToRole} onChange={(e) => setCopyToRole(e.target.value)}>
+                  <option value="">To role…</option>
+                  {roleSlugs.map((slug) => (
+                    <option key={slug} value={slug}>{roleCfgMap[slug]?.label || slug}</option>
+                  ))}
+                </select>
+                <button type="button" style={s.outlineBtn} onClick={applyCopyRoleAccess}>Apply copy</button>
               </div>
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                 <button
@@ -975,11 +1121,12 @@ export default function UserManagement() {
                 </button>
               </div>
             </div>
-            <div style={{ overflowX: 'auto' }} ref={matrixTableRef}>
-              <table style={s.table}>
+            <div style={{ overflow: 'auto', maxHeight: 'min(70vh, 720px)' }} ref={matrixTableRef}>
+              <table style={{ ...s.table, borderCollapse: 'separate', borderSpacing: 0 }}>
                 <thead>
                   <tr>
-                    <th style={s.th}>Feature</th>
+                    <th style={{ ...s.th, ...s.stickyHead, ...s.stickyFeature, zIndex: 5 }}>Feature</th>
+                    <th style={{ ...s.th, ...s.stickyHead, ...s.stickyPerm, textAlign: 'center', zIndex: 5 }}>Permission</th>
                     {roleSlugs.map((r) => {
                       const cfg = roleCfgMap[r] || { color: t.textMuted, label: r, icon: '👤' };
                       const allOn = matrixRows.every((row) => !!roleAccessEdit[row.id]?.[r]);
@@ -991,10 +1138,12 @@ export default function UserManagement() {
                           data-role-col={r}
                           style={{
                             ...s.th,
+                            ...s.stickyHead,
                             color: cfg.color,
                             textAlign: 'center',
-                            background: highlighted ? `${cfg.color}22` : undefined,
+                            background: highlighted ? `${cfg.color}22` : t.surface2,
                             boxShadow: highlighted ? `inset 0 -3px 0 ${cfg.color}` : undefined,
+                            zIndex: 4,
                           }}
                         >
                           <label
@@ -1028,21 +1177,27 @@ export default function UserManagement() {
                     const allRolesOn = roleSlugs.every((r) => !!rolesMap[r]);
                     const someRolesOn = roleSlugs.some((r) => !!rolesMap[r]);
                     const prevGroup = idx > 0 ? matrixRows[idx - 1].group : null;
-                    const showGroup = row.group && row.group !== prevGroup;
+                    const showGroup = row.group && row.group !== prevGroup && !row.parentId;
+                    const isChild = Boolean(row.parentId);
+                    const perm = permissionType(row);
+                    const featureLabel = isChild ? `↳ ${row.feature}` : row.feature;
                     return (
                       <Fragment key={row.id}>
                         {showGroup && (
                           <tr>
                             <td
-                              colSpan={1 + roleSlugs.length}
+                              colSpan={2 + roleSlugs.length}
                               style={{
                                 ...s.td,
+                                position: 'sticky',
+                                left: 0,
                                 background: t.surface2,
                                 color: t.accent,
                                 fontWeight: 700,
                                 fontSize: 12,
                                 letterSpacing: '0.04em',
                                 textTransform: 'uppercase',
+                                zIndex: 1,
                               }}
                             >
                               {row.group}
@@ -1050,7 +1205,18 @@ export default function UserManagement() {
                           </tr>
                         )}
                         <tr>
-                          <td style={{ ...s.td, fontWeight: 500, color: t.text }}>
+                          <td style={{
+                            ...s.td,
+                            ...s.stickyFeature,
+                            position: 'sticky',
+                            zIndex: 2,
+                            fontWeight: isChild ? 400 : 500,
+                            color: t.text,
+                            paddingLeft: isChild ? 28 : undefined,
+                            background: t.surface,
+                          }}
+                            title={isChild ? 'Child of the page above — not a separate menu item' : undefined}
+                          >
                             <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
                               <input
                                 type="checkbox"
@@ -1059,8 +1225,34 @@ export default function UserManagement() {
                                 onChange={(e) => setAllRolesForFeature(row.id, e.target.checked)}
                                 title="Select / clear all roles for this feature"
                               />
-                              {row.feature}
+                              <span>{featureLabel}</span>
                             </label>
+                          </td>
+                          <td
+                            style={{
+                              ...s.td,
+                              ...s.stickyPerm,
+                              position: 'sticky',
+                              zIndex: 2,
+                              textAlign: 'center',
+                              background: t.surface,
+                            }}
+                            title={perm.hint}
+                          >
+                            <span style={{
+                              display: 'inline-block',
+                              minWidth: 58,
+                              padding: '2px 8px',
+                              borderRadius: 999,
+                              fontSize: 10,
+                              fontWeight: 800,
+                              letterSpacing: '0.04em',
+                              color: perm.color,
+                              background: `${perm.color}22`,
+                              border: `1px solid ${perm.color}66`,
+                            }}>
+                              {perm.text}
+                            </span>
                           </td>
                           {roleSlugs.map((r) => {
                             const current = !!rolesMap[r];
@@ -1144,6 +1336,16 @@ function getStyles(t) {
     table:     { width: '100%', borderCollapse: 'collapse', fontSize: 13 },
     th:        { padding: '10px', background: t.surface2, color: t.textDim,
                  textAlign: 'left', whiteSpace: 'nowrap', fontWeight: 600 },
+    stickyHead:{ position: 'sticky', top: 0, boxShadow: `0 1px 0 ${t.border}` },
+    stickyFeature: {
+      left: 0, width: 260, minWidth: 260, maxWidth: 260,
+      boxShadow: `1px 0 0 ${t.border}`,
+      whiteSpace: 'normal',
+    },
+    stickyPerm: {
+      left: 260, minWidth: 96, width: 96,
+      boxShadow: `1px 0 0 ${t.border}`,
+    },
     td:        { padding: '10px', borderBottom: `1px solid ${t.border}`, verticalAlign: 'middle' },
   };
 }

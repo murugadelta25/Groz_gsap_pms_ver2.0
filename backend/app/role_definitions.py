@@ -53,40 +53,82 @@ def _save_site_json(db: Session, cfg: dict) -> None:
         db.add(SiteConfig(config_json=json.dumps(cfg)))
 
 
+def _role_row_payload(r: AppRole) -> dict[str, Any]:
+    return {
+        "slug": r.slug,
+        "label": r.label,
+        "description": r.description or "",
+        "color": r.color or "#64748b",
+        "icon": r.icon or "👤",
+        "isSystem": bool(r.is_system),
+        "inheritsSlug": r.inherits_slug,
+        "sortOrder": r.sort_order or 100,
+    }
+
+
+def _seed_payload(seed: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "slug": seed["slug"],
+        "label": seed["label"],
+        "description": seed.get("description") or "",
+        "color": seed.get("color") or "#64748b",
+        "icon": seed.get("icon") or "👤",
+        "isSystem": bool(seed.get("is_system")),
+        "inheritsSlug": seed.get("inherits_slug"),
+        "sortOrder": seed.get("sort_order") or 100,
+    }
+
+
 def list_role_slugs(db: Session) -> list[str]:
+    """Built-in roles first, then custom roles. Never drop builtins when a custom role exists."""
+    try:
+        ensure_roles_table_and_seed(db)
+    except Exception:
+        pass
     rows = (
         db.query(AppRole)
         .filter(AppRole.active == 1)
         .order_by(AppRole.sort_order, AppRole.label)
         .all()
     )
-    if rows:
-        return [r.slug for r in rows]
-    return [s["slug"] for s in BUILTIN_ROLE_SEEDS]
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for seed in BUILTIN_ROLE_SEEDS:
+        slug = seed["slug"]
+        if slug not in seen:
+            ordered.append(slug)
+            seen.add(slug)
+    for r in rows:
+        if r.slug not in seen:
+            ordered.append(r.slug)
+            seen.add(r.slug)
+    return ordered
 
 
 def list_roles_payload(db: Session) -> list[dict[str, Any]]:
+    """Return built-in + custom roles. Re-seed missing system roles if the table was empty."""
+    try:
+        ensure_roles_table_and_seed(db)
+    except Exception:
+        pass
     rows = (
         db.query(AppRole)
         .filter(AppRole.active == 1)
         .order_by(AppRole.sort_order, AppRole.label)
         .all()
     )
-    if not rows:
-        return [dict(s) for s in BUILTIN_ROLE_SEEDS]
-    return [
-        {
-            "slug": r.slug,
-            "label": r.label,
-            "description": r.description or "",
-            "color": r.color or "#64748b",
-            "icon": r.icon or "👤",
-            "isSystem": bool(r.is_system),
-            "inheritsSlug": r.inherits_slug,
-            "sortOrder": r.sort_order or 100,
-        }
-        for r in rows
-    ]
+    by_slug = {r.slug: _role_row_payload(r) for r in rows}
+    ordered: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for seed in BUILTIN_ROLE_SEEDS:
+        slug = seed["slug"]
+        ordered.append(by_slug.get(slug) or _seed_payload(seed))
+        seen.add(slug)
+    for r in rows:
+        if r.slug not in seen:
+            ordered.append(by_slug[r.slug])
+            seen.add(r.slug)
+    return ordered
 
 
 def role_exists(db: Session, slug: str) -> bool:
@@ -99,6 +141,7 @@ def ensure_roles_table_and_seed(db: Session) -> None:
     AppRole.__table__.create(bind=engine, checkfirst=True)
 
     existing = {r.slug for r in db.query(AppRole).all()}
+    added = False
     for seed in BUILTIN_ROLE_SEEDS:
         if seed["slug"] in existing:
             continue
@@ -113,7 +156,9 @@ def ensure_roles_table_and_seed(db: Session) -> None:
             sort_order=seed.get("sort_order", 100),
             active=1,
         ))
-    db.commit()
+        added = True
+    if added:
+        db.commit()
 
 
 def _all_feature_ids_for_access() -> set[str]:
@@ -162,6 +207,10 @@ def create_role(
     label = (label or slug).strip()
     if not label:
         raise ValueError("Role label is required")
+    try:
+        ensure_roles_table_and_seed(db)
+    except Exception:
+        pass
     if db.query(AppRole).filter(AppRole.slug == slug).first():
         raise ValueError(f"Role '{slug}' already exists")
     if inherits_slug:
@@ -189,12 +238,16 @@ def create_role(
 
     # Copy inherit role access if specified, else default all pages off.
     if inherits_slug:
+        defaults = access_matrix_role_defaults()
         cfg = _load_site_json(db)
         access = cfg.get("featureRoleAccess") or {}
         for fid in _all_feature_ids_for_access():
             src = access.get(fid) or {}
-            inherited = bool(src.get(inherits_slug))
-            row_map = dict(access.get(fid) or {})
+            if inherits_slug in src:
+                inherited = bool(src.get(inherits_slug))
+            else:
+                inherited = bool((defaults.get(fid) or {}).get(inherits_slug))
+            row_map = dict(src)
             row_map[slug] = inherited
             access[fid] = row_map
         cfg["featureRoleAccess"] = access

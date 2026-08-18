@@ -6,31 +6,103 @@ from typing import Any
 from .feature_registry import registry_groups, registry_standalone
 from .role_seeds import BUILTIN_ROLE_SEEDS, TOGGLEABLE_ROLES
 
-# Non-page capabilities (buttons / API actions), still editable in User Management.
+# Page-level View is the registry row. These are Edit / Action ticks nested under a page.
+# Defaults: operator may view WO/Planning but not create; maintenance cannot raise breakdown.
+_PLAN = {"superadmin": True, "admin": True, "site_admin": True, "supervisor": True, "operator": False, "maintenance": False, "quality": False}
+_OP_RAISE = {"superadmin": True, "admin": True, "site_admin": True, "supervisor": True, "operator": True, "maintenance": False, "quality": False}
+_MAINT = {"superadmin": True, "admin": True, "site_admin": True, "supervisor": False, "operator": False, "maintenance": True, "quality": False}
+_ENTRY = {"superadmin": True, "admin": True, "site_admin": True, "supervisor": True, "operator": True, "maintenance": False, "quality": False}
+_QC_INSPECT = {"superadmin": True, "admin": True, "site_admin": True, "supervisor": True, "operator": False, "maintenance": False, "quality": True}
+_QC_APPROVE = {"superadmin": True, "admin": True, "site_admin": True, "supervisor": True, "operator": False, "maintenance": False, "quality": False}
+
 CAPABILITY_ROWS: list[dict[str, Any]] = [
+    {
+        "id": "capability.edit_work_orders",
+        "label": "Create / Edit Work Orders",
+        "group": "Production",
+        "kind": "edit",
+        "parent_id": "production.work_orders",
+        "roles": dict(_PLAN),
+    },
+    {
+        "id": "capability.edit_planning",
+        "label": "Create / Edit Plans",
+        "group": "Production",
+        "kind": "edit",
+        "parent_id": "production.planning",
+        "roles": dict(_PLAN),
+    },
+    {
+        "id": "capability.edit_data_entry",
+        "label": "Submit Data Entry",
+        "group": "Production",
+        "kind": "edit",
+        "parent_id": "production.data_entry",
+        "roles": dict(_ENTRY),
+    },
+    {
+        "id": "capability.raise_model_change",
+        "label": "Raise Model Change",
+        "group": "Production",
+        "kind": "action",
+        "parent_id": "production.model_change",
+        "roles": dict(_OP_RAISE),
+    },
     {
         "id": "capability.approve_model_change",
         "label": "Approve Model Change",
-        "group": "Actions",
-        "roles": {"superadmin": True, "admin": True, "site_admin": True, "supervisor": True, "operator": False, "maintenance": False, "quality": False},
+        "group": "Production",
+        "kind": "action",
+        "parent_id": "production.model_change",
+        "roles": dict(_PLAN),
     },
     {
         "id": "capability.raise_breakdown",
         "label": "Raise Breakdown Ticket",
-        "group": "Actions",
-        "roles": {"superadmin": True, "admin": True, "site_admin": True, "supervisor": True, "operator": True, "maintenance": False, "quality": False},
+        "group": "Maintenance",
+        "kind": "action",
+        "parent_id": "maintenance.breakdown",
+        "roles": dict(_OP_RAISE),
     },
     {
         "id": "capability.ack_breakdown",
         "label": "Acknowledge Breakdown",
-        "group": "Actions",
-        "roles": {"superadmin": True, "admin": True, "site_admin": True, "supervisor": False, "operator": False, "maintenance": True, "quality": False},
+        "group": "Maintenance",
+        "kind": "action",
+        "parent_id": "maintenance.dashboard",
+        "roles": dict(_MAINT),
     },
     {
         "id": "capability.resolve_breakdown",
-        "label": "Resolve Breakdown",
-        "group": "Actions",
-        "roles": {"superadmin": True, "admin": True, "site_admin": True, "supervisor": False, "operator": False, "maintenance": True, "quality": False},
+        "label": "Resolve / Troubleshoot Breakdown",
+        "group": "Maintenance",
+        "kind": "action",
+        "parent_id": "maintenance.dashboard",
+        "roles": dict(_MAINT),
+    },
+    {
+        "id": "capability.qc_inspect",
+        "label": "QC Inspect / Submit",
+        "group": "QC",
+        "kind": "edit",
+        "parent_id": "qc.approvals",
+        "roles": dict(_QC_INSPECT),
+    },
+    {
+        "id": "capability.qc_approve",
+        "label": "QC Incharge Approve",
+        "group": "QC",
+        "kind": "action",
+        "parent_id": "qc.approvals",
+        "roles": dict(_QC_APPROVE),
+    },
+    {
+        "id": "capability.edit_tools",
+        "label": "Create / Edit Tools",
+        "group": "Settings",
+        "kind": "edit",
+        "parent_id": "settings.tools",
+        "roles": dict(_PLAN),
     },
 ]
 
@@ -99,16 +171,31 @@ def _page_rows_from_registry(role_slugs: list[str] | None = None) -> list[dict[s
 
 
 def access_matrix_rows(role_slugs: list[str] | None = None) -> list[dict[str, Any]]:
-    rows = _page_rows_from_registry(role_slugs)
+    pages = _page_rows_from_registry(role_slugs)
+    cap_rows: list[dict[str, Any]] = []
     for cap in CAPABILITY_ROWS:
-        rows.append({
+        cap_rows.append({
             "id": cap["id"],
             "label": cap["label"],
             "registry_id": None,
             "group": cap.get("group") or "Actions",
-            "kind": "action",
+            "kind": cap.get("kind") or "action",
+            "parent_id": cap.get("parent_id"),
             "roles": _complete_roles(cap.get("roles"), role_slugs),
         })
+    by_parent: dict[str, list[dict[str, Any]]] = {}
+    rest: list[dict[str, Any]] = []
+    for cap in cap_rows:
+        parent = cap.get("parent_id")
+        if parent:
+            by_parent.setdefault(parent, []).append(cap)
+        else:
+            rest.append(cap)
+    rows: list[dict[str, Any]] = []
+    for page in pages:
+        rows.append(page)
+        rows.extend(by_parent.get(page["id"]) or [])
+    rows.extend(rest)
     return rows
 
 
@@ -131,6 +218,7 @@ def access_matrix_payload(role_slugs: list[str] | None = None) -> list[dict[str,
             "registryId": row.get("registry_id"),
             "group": row.get("group") or "Pages",
             "kind": row.get("kind") or "page",
+            "parentId": row.get("parent_id"),
             "defaultRoles": _complete_roles(row.get("roles"), role_slugs),
         }
         for row in access_matrix_rows(role_slugs)

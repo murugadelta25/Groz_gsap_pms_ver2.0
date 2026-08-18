@@ -9,7 +9,7 @@ import { useTheme } from '../context/ThemeContext';
 import { pageClass } from '../themes/tileHelpers';
 import { DRAFT_KEYS } from '../utils/formPersistence';
 import usePersistedState from '../hooks/usePersistedState';
-import { hasRole } from '../config/accessMatrix';
+import { useFeatureFlags } from '../context/FeatureFlagsContext';
 
 const STATUS_CONFIG = {
   raised:       { color: '#ef4444', label: 'Raised',       icon: '🔴' },
@@ -69,6 +69,7 @@ function durationLabel(ms) {
 
 export default function Breakdown() {
   const { user } = useAuth();
+  const { canAccess } = useFeatureFlags();
   const { theme: t } = useTheme();
   const [tab, setTab] = useState('breakdown');
   const [machines, setMachines] = useState([]);
@@ -274,7 +275,7 @@ export default function Breakdown() {
         </div>
 
         {/* Raise Ticket */}
-        {hasRole(user?.role, 'operator', 'admin', 'supervisor') && (
+        {canAccess('capability.raise_breakdown', user?.role) && (
           <div style={card}>
             <h4 style={{ color: t.accent, margin: '0 0 16px', fontSize: 14 }}>Raise Breakdown Ticket</h4>
             <form onSubmit={raiseTicket} style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
