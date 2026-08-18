@@ -163,13 +163,18 @@ def _ensure_superadmin_role():
     except Exception as exc:
         print(f"[WARN] users.role VARCHAR migration skipped: {exc}")
 
-    try:
-        db = SessionLocal()
-        ensure_roles_table_and_seed(db)
-        print("[OK] app_roles table seeded")
-        db.close()
-    except Exception as exc:
-        print(f"[WARN] app_roles seed skipped: {exc}")
+    for attempt in range(3):
+        try:
+            db = SessionLocal()
+            ensure_roles_table_and_seed(db)
+            print("[OK] app_roles table seeded")
+            db.close()
+            break
+        except Exception as exc:
+            db.close()
+            print(f"[WARN] app_roles seed attempt {attempt + 1} failed: {exc}")
+            if attempt < 2:
+                import time; time.sleep(2)
 
     try:
         from .auth import hash_password

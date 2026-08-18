@@ -53,6 +53,11 @@ def _validate_user_role(db: Session, role: str) -> str:
     if not role:
         raise HTTPException(400, "role is required")
     try:
+        # Re-seed if table is empty (e.g. after DB restore or startup race condition)
+        from ..role_definitions import ensure_roles_table_and_seed
+        from ..models import AppRole
+        if db.query(AppRole).count() == 0:
+            ensure_roles_table_and_seed(db)
         known = role_exists(db, role)
     except Exception as exc:
         print(f"[users] role_exists failed for '{role}': {exc}")
