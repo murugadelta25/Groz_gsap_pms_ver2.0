@@ -19,7 +19,7 @@ from ..models import (
 )
 from ..auth import hash_password, get_current_user, require_role, verify_password
 from ..upload_limits import MAX_IMAGE_BYTES, save_upload_limited
-from ..password_policy import PASSWORD_HINT, validate_password_or_raise
+from ..role_definitions import role_exists
 
 router = APIRouter(prefix="/api/users", tags=["users"])
 
@@ -44,7 +44,16 @@ def _unlink_reference_photo_file(photo_url: Optional[str]) -> None:
         pass
 
 
-ROLES = ["operator", "supervisor", "maintenance", "admin", "site_admin", "quality", "superadmin"]
+ROLES = ["operator", "supervisor", "maintenance", "admin", "site_admin", "quality", "superadmin"]  # legacy fallback
+
+
+def _validate_user_role(db: Session, role: str) -> str:
+    role = (role or "").strip().lower()
+    if not role:
+        raise HTTPException(400, "role is required")
+    if not role_exists(db, role):
+        raise HTTPException(400, f"Unknown role '{role}'. Create it under User Management → Roles first.")
+    return role
 
 class UserCreate(BaseModel):
     username: str
@@ -80,8 +89,7 @@ def get_me(current=Depends(get_current_user)):
 @router.post("/")
 def create_user(data: UserCreate, db: Session = Depends(get_db),
                 current=Depends(require_role("admin"))):
-    if data.role not in ROLES:
-        raise HTTPException(400, f"role must be one of {ROLES}")
+    data.role = _validate_user_role(db, data.role)
     if data.role == "superadmin" and current.role != "superadmin":
         raise HTTPException(403, "Only superadmin can create superadmin users")
     if db.query(User).filter(User.username == data.username).first():
@@ -107,8 +115,7 @@ def update_user(user_id: int, data: UserUpdate, db: Session = Depends(get_db),
     if u.id == current.id and data.role and data.role != current.role:
         raise HTTPException(400, "Cannot change your own role")
     if data.role:
-        if data.role not in ROLES:
-            raise HTTPException(400, f"role must be one of {ROLES}")
+        data.role = _validate_user_role(db, data.role)
         if data.role == "superadmin" and current.role != "superadmin":
             raise HTTPException(403, "Only superadmin can assign superadmin role")
         if u.role == "superadmin" and current.role != "superadmin":

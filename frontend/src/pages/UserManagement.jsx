@@ -9,19 +9,18 @@ import PageHeader from '../components/PageHeader';
 import { PASSWORD_HINT, passwordPolicyError } from '../utils/passwordPolicy';
 import { ACCESS_MATRIX_ROLES, getAccessMatrixRoleDefaults, normalizeAccessMatrixFromApi } from '../config/accessMatrix';
 
-const ROLES = ACCESS_MATRIX_ROLES;
-
-const ROLE_CFG = {
+const FALLBACK_ROLE_CFG = {
   superadmin:  { color: '#dc2626', label: 'Super Admin', icon: '🛡', desc: 'Full access + factory setup, data backup & archive' },
   admin:       { color: '#ef4444', label: 'Admin',       icon: '⚙', desc: 'Full access to all features except factory setup & backup' },
-  site_admin:  { color: '#f97316', label: 'Site Admin',  icon: '🏭', desc: 'Plant-level access (same as Admin). Grant pages in the matrix below, including Monitor Mode.' },
+  site_admin:  { color: '#f97316', label: 'Site Admin',  icon: '🏭', desc: 'Plant-level access — grant pages in the matrix below' },
   supervisor:  { color: '#f59e0b', label: 'Supervisor',  icon: '📋', desc: 'Planning, data entry, QC incharge approval' },
-  operator:    { color: '#0ea5e9', label: 'Operator', icon: '🔧', desc: 'Optional web/tablet login — shop-floor roster is in Operator Management' },
+  operator:    { color: '#0ea5e9', label: 'Operator', icon: '🔧', desc: 'Optional web/tablet login' },
   maintenance: { color: '#10b981', label: 'Maintenance', icon: '🛠', desc: 'Acknowledge and resolve breakdown tickets' },
   quality:     { color: '#8b5cf6', label: 'Quality',     icon: '✓', desc: 'QC inspection sheet — inspector approval' },
 };
 
 const INIT_FORM = { username: '', password: '', role: 'supervisor' };
+const INIT_ROLE_FORM = { slug: '', label: '', description: '', color: '#64748b', icon: '👤', inheritsSlug: '' };
 
 function PasswordInput({ value, onChange, placeholder = '', required = false, style = {} }) {
   const [visible, setVisible] = useState(false);
@@ -119,7 +118,7 @@ function SectionToggle({ open, onToggle, label, count }) {
 export default function UserManagement() {
   const { theme: t } = useTheme();
   const { user: me } = useAuth();
-  const { roleAccess, accessMatrix: apiMatrix, reload: reloadFeatures } = useFeatureFlags();
+  const { roleAccess, accessMatrix: apiMatrix, toggleableRoles, roles: appRoles, reload: reloadFeatures } = useFeatureFlags();
   const [users, setUsers]       = useState([]);
   const [form, setForm]         = useState(INIT_FORM);
   const [editId, setEditId]     = useState(null);
@@ -134,21 +133,42 @@ export default function UserManagement() {
   const [search, setSearch] = useState('');
   const [roleAccessEdit, setRoleAccessEdit] = useState({});
   const [roleAccessSaving, setRoleAccessSaving] = useState(false);
+  const [showRoleForm, setShowRoleForm] = useState(false);
+  const [roleEditSlug, setRoleEditSlug] = useState(null);
+  const [roleForm, setRoleForm] = useState(INIT_ROLE_FORM);
+  const [roleSaving, setRoleSaving] = useState(false);
+  const [matrixHighlightRole, setMatrixHighlightRole] = useState(null);
+  const matrixTableRef = useRef(null);
   const editFormRef = useRef(null);
   const addFormRef = useRef(null);
 
-  const flash = (text, ok = true) => {
-    setMsg({ text, ok });
-    setTimeout(() => setMsg({ text: '', ok: true }), 4000);
-  };
+  const roleSlugs = useMemo(
+    () => (toggleableRoles?.length ? toggleableRoles : ACCESS_MATRIX_ROLES),
+    [toggleableRoles],
+  );
+
+  const roleCfgMap = useMemo(() => {
+    const out = { ...FALLBACK_ROLE_CFG };
+    for (const r of appRoles || []) {
+      out[r.slug] = {
+        color: r.color || '#64748b',
+        label: r.label || r.slug,
+        icon: r.icon || '👤',
+        desc: r.description || '',
+        isSystem: r.isSystem,
+        inheritsSlug: r.inheritsSlug,
+      };
+    }
+    return out;
+  }, [appRoles]);
 
   const matrixRows = useMemo(
-    () => normalizeAccessMatrixFromApi(apiMatrix),
-    [apiMatrix],
+    () => normalizeAccessMatrixFromApi(apiMatrix, roleSlugs),
+    [apiMatrix, roleSlugs],
   );
 
   useEffect(() => {
-    const defaults = getAccessMatrixRoleDefaults();
+    const defaults = getAccessMatrixRoleDefaults(roleSlugs);
     const merged = {};
     const ids = new Set([
       ...Object.keys(defaults),
@@ -157,14 +177,20 @@ export default function UserManagement() {
     ]);
     for (const id of ids) {
       const row = matrixRows.find((r) => r.id === id || r.registryId === id);
-      merged[id] = {
-        ...(row?.roles || {}),
-        ...(defaults[id] || {}),
-        ...((roleAccess || {})[id] || {}),
-      };
+      const base = { ...rolesMapFromEmpty(roleSlugs), ...(row?.roles || {}), ...(defaults[id] || {}), ...((roleAccess || {})[id] || {}) };
+      merged[id] = base;
     }
     setRoleAccessEdit(merged);
-  }, [roleAccess, matrixRows]);
+  }, [roleAccess, matrixRows, roleSlugs]);
+
+  function rolesMapFromEmpty(slugs) {
+    return Object.fromEntries(slugs.map((s) => [s, false]));
+  }
+
+  const flash = (text, ok = true) => {
+    setMsg({ text, ok });
+    setTimeout(() => setMsg({ text: '', ok: true }), 4000);
+  };
 
   const fetchUsers = useCallback(async () => {
     try {
@@ -283,17 +309,17 @@ export default function UserManagement() {
   };
 
   const s = getStyles(t);
-  const byRole = useMemo(() => ROLES.reduce((acc, r) => {
+  const byRole = useMemo(() => roleSlugs.reduce((acc, r) => {
     acc[r] = users.filter(u => u.role === r);
     return acc;
-  }, {}), [users]);
+  }, {}), [users, roleSlugs]);
 
   const filteredUsers = useMemo(() => {
     const q = search.trim().toLowerCase();
     return users.filter((u) => {
       if (roleFilter && u.role !== roleFilter) return false;
       if (!q) return true;
-      const cfg = ROLE_CFG[u.role] || {};
+      const cfg = roleCfgMap[u.role] || {};
       return (
         String(u.id).includes(q)
         || (u.username || '').toLowerCase().includes(q)
@@ -301,12 +327,7 @@ export default function UserManagement() {
         || (cfg.label || '').toLowerCase().includes(q)
       );
     });
-  }, [users, roleFilter, search]);
-
-  const selectRole = (role) => {
-    setRoleFilter((prev) => (prev === role ? null : role));
-    setShowUsers(true);
-  };
+  }, [users, roleFilter, search, roleCfgMap]);
 
   const toggleFeatureRole = (featureId, role) => {
     setRoleAccessEdit((prev) => {
@@ -339,7 +360,7 @@ export default function UserManagement() {
   const setAllRolesForFeature = (featureId, enabled) => {
     setRoleAccessEdit((prev) => {
       const current = { ...(prev[featureId] || {}) };
-      for (const role of ROLES) current[role] = enabled;
+      for (const role of roleSlugs) current[role] = enabled;
       const next = { ...prev, [featureId]: current };
       const row = matrixRows.find((r) => r.id === featureId);
       if (row?.registryId && row.registryId !== featureId) {
@@ -350,8 +371,107 @@ export default function UserManagement() {
   };
 
   const resetRoleAccessToDefaults = () => {
-    setRoleAccessEdit(getAccessMatrixRoleDefaults());
+    setRoleAccessEdit(getAccessMatrixRoleDefaults(roleSlugs));
     flash('Restored default role access (click Save to apply)');
+  };
+
+  const openAddRole = () => {
+    setRoleEditSlug(null);
+    setRoleForm(INIT_ROLE_FORM);
+    setShowRoleForm(true);
+  };
+
+  const openEditRole = (slug, e) => {
+    e?.stopPropagation?.();
+    const r = (appRoles || []).find((x) => x.slug === slug) || {};
+    setRoleEditSlug(slug);
+    setRoleForm({
+      slug: r.slug || slug,
+      label: r.label || slug,
+      description: r.description || '',
+      color: r.color || '#64748b',
+      icon: r.icon || '👤',
+      inheritsSlug: r.inheritsSlug || '',
+    });
+    setShowRoleForm(true);
+  };
+
+  const closeRoleForm = () => {
+    setShowRoleForm(false);
+    setRoleEditSlug(null);
+    setRoleForm(INIT_ROLE_FORM);
+  };
+
+  const saveRoleDefinition = async (e) => {
+    e.preventDefault();
+    if (!roleForm.label.trim()) {
+      flash('Role name is required', false);
+      return;
+    }
+    setRoleSaving(true);
+    try {
+      if (roleEditSlug) {
+        await api.patch(`/api/roles/${roleEditSlug}`, {
+          label: roleForm.label.trim(),
+          description: roleForm.description,
+          color: roleForm.color,
+          icon: roleForm.icon,
+          inheritsSlug: roleForm.inheritsSlug || null,
+        });
+        flash('✅ Role updated');
+      } else {
+        await api.post('/api/roles/', {
+          slug: roleForm.slug.trim() || undefined,
+          label: roleForm.label.trim(),
+          description: roleForm.description,
+          color: roleForm.color,
+          icon: roleForm.icon,
+          inheritsSlug: roleForm.inheritsSlug || null,
+        });
+        flash('✅ Role created — set page access in the Feature Access Matrix below, then Save');
+      }
+      closeRoleForm();
+      await reloadFeatures();
+    } catch (err) {
+      flash('❌ ' + (err.response?.data?.detail || err.message || 'Role save failed'), false);
+    } finally {
+      setRoleSaving(false);
+    }
+  };
+
+  const deleteRoleDefinition = async (slug, e) => {
+    e?.stopPropagation?.();
+    const cfg = roleCfgMap[slug] || {};
+    if (cfg.isSystem) {
+      flash('System roles cannot be deleted. Adjust page access in the matrix instead.', false);
+      return;
+    }
+    if (!window.confirm(`Delete role "${cfg.label || slug}"? Users must be reassigned first.`)) return;
+    try {
+      await api.delete(`/api/roles/${slug}`);
+      if (roleFilter === slug) setRoleFilter(null);
+      if (matrixHighlightRole === slug) setMatrixHighlightRole(null);
+      await reloadFeatures();
+      flash('✅ Role deleted');
+    } catch (err) {
+      flash('❌ ' + (err.response?.data?.detail || err.message || 'Delete failed'), false);
+    }
+  };
+
+  const focusRoleInMatrix = (slug) => {
+    setMatrixHighlightRole(slug);
+    setShowMatrix(true);
+    setTimeout(() => {
+      const el = matrixTableRef.current?.querySelector(`[data-role-col="${slug}"]`);
+      el?.scrollIntoView?.({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+    }, 80);
+  };
+
+  const selectRole = (role) => {
+    setRoleFilter((prev) => (prev === role ? null : role));
+    setShowUsers(true);
+    if (role) focusRoleInMatrix(role);
+    else setMatrixHighlightRole(null);
   };
 
   const saveRoleAccess = async () => {
@@ -422,8 +542,8 @@ export default function UserManagement() {
                 disabled={editId === me?.id}
                 onChange={e => setForm(p => ({ ...p, role: e.target.value }))}
               >
-                {ROLES.map(r => (
-                  <option key={r} value={r}>{ROLE_CFG[r].icon} {ROLE_CFG[r].label}</option>
+                {roleSlugs.map(r => (
+                  <option key={r} value={r}>{roleCfgMap[r]?.icon || '👤'} {roleCfgMap[r]?.label || r}</option>
                 ))}
               </select>
               {editId === me?.id && (
@@ -439,13 +559,13 @@ export default function UserManagement() {
           {form.role && (
             <div style={{
               padding: '10px 14px', borderRadius: 8, background: inline ? t.surface : t.surface2,
-              borderLeft: `3px solid ${ROLE_CFG[form.role]?.color}`, fontSize: 13,
+              borderLeft: `3px solid ${roleCfgMap[form.role]?.color}`, fontSize: 13,
             }}
             >
-              <span style={{ color: ROLE_CFG[form.role]?.color, fontWeight: 600 }}>
-                {ROLE_CFG[form.role]?.icon} {ROLE_CFG[form.role]?.label}
+              <span style={{ color: roleCfgMap[form.role]?.color, fontWeight: 600 }}>
+                {roleCfgMap[form.role]?.icon} {roleCfgMap[form.role]?.label}
               </span>
-              <span style={{ color: t.textMuted, marginLeft: 8 }}>{ROLE_CFG[form.role]?.desc}</span>
+              <span style={{ color: t.textMuted, marginLeft: 8 }}>{roleCfgMap[form.role]?.desc}</span>
             </div>
           )}
         </form>
@@ -472,18 +592,25 @@ export default function UserManagement() {
         </div>
       )}
 
-      {/* Role Access Summary — clickable filters */}
+      {/* Role Access Summary — linked to Feature Access Matrix */}
       <div style={s.card}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14, gap: 8, flexWrap: 'wrap' }}>
           <h4 style={{ ...s.cardTitle, margin: 0 }}>🔐 Role Access Summary</h4>
-          <span style={{ color: t.textFaint, fontSize: 12 }}>
-            Click a role to filter the user list · {users.length} login user{users.length !== 1 ? 's' : ''} total
-          </span>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+            <span style={{ color: t.textFaint, fontSize: 12 }}>
+              Click a role to filter users and jump to its matrix column · {users.length} login user{users.length !== 1 ? 's' : ''}
+            </span>
+            <button type="button" style={s.addBtn} onClick={openAddRole}>+ Add Role</button>
+          </div>
         </div>
+        <p style={{ color: t.textMuted, fontSize: 12, margin: '0 0 12px', lineHeight: 1.45 }}>
+          Page permissions for each role are configured in the <strong>Feature Access Matrix</strong> below.
+          Create a role here, tick the pages that role may see, then click <strong>Save access matrix</strong>.
+        </p>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 12 }}>
           <button
             type="button"
-            onClick={() => { setRoleFilter(null); setShowUsers(true); }}
+            onClick={() => { setRoleFilter(null); setMatrixHighlightRole(null); setShowUsers(true); }}
             style={{
               ...s.roleCard,
               textAlign: 'left',
@@ -504,39 +631,111 @@ export default function UserManagement() {
             </div>
             <div style={{ color: t.textMuted, fontSize: 12, lineHeight: 1.4 }}>Show every login account</div>
           </button>
-          {ROLES.map(r => {
-            const cfg = ROLE_CFG[r];
+          {roleSlugs.map(r => {
+            const cfg = roleCfgMap[r] || { color: '#64748b', label: r, icon: '👤', desc: '', isSystem: false };
             const count = byRole[r]?.length || 0;
-            const active = roleFilter === r;
+            const active = roleFilter === r || matrixHighlightRole === r;
             return (
-              <button
+              <div
                 key={r}
-                type="button"
-                onClick={() => selectRole(r)}
                 style={{
                   ...s.roleCard,
-                  textAlign: 'left',
-                  cursor: 'pointer',
                   borderLeft: `3px solid ${cfg.color}`,
                   outline: active ? `2px solid ${cfg.color}` : 'none',
                   background: active ? `${cfg.color}18` : t.surface2,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 6,
                 }}
               >
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10, marginBottom: 6 }}>
-                  <span style={{ color: cfg.color, fontWeight: 700, fontSize: 14, lineHeight: 1.35, flex: 1, minWidth: 0 }}>
-                    {cfg.icon} {cfg.label}
-                  </span>
-                  <span style={{ background: cfg.color + '33', color: cfg.color, borderRadius: 10,
-                                 padding: '1px 8px', fontSize: 12, fontWeight: 700, flexShrink: 0, whiteSpace: 'nowrap' }}>
-                    {count} user{count !== 1 ? 's' : ''}
-                  </span>
+                <button
+                  type="button"
+                  onClick={() => selectRole(r)}
+                  style={{
+                    background: 'none', border: 'none', padding: 0, margin: 0, cursor: 'pointer', textAlign: 'left',
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10, marginBottom: 6 }}>
+                    <span style={{ color: cfg.color, fontWeight: 700, fontSize: 14, lineHeight: 1.35, flex: 1, minWidth: 0 }}>
+                      {cfg.icon} {cfg.label}
+                      {cfg.isSystem && <span style={{ color: t.textFaint, fontWeight: 500, fontSize: 10, marginLeft: 6 }}>system</span>}
+                    </span>
+                    <span style={{ background: cfg.color + '33', color: cfg.color, borderRadius: 10,
+                                   padding: '1px 8px', fontSize: 12, fontWeight: 700, flexShrink: 0, whiteSpace: 'nowrap' }}>
+                      {count} user{count !== 1 ? 's' : ''}
+                    </span>
+                  </div>
+                  <div style={{ color: t.textMuted, fontSize: 12, lineHeight: 1.4 }}>{cfg.desc || 'Custom role — set pages in matrix'}</div>
+                </button>
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                  <button type="button" style={s.outlineBtn} onClick={(e) => openEditRole(r, e)}>Edit</button>
+                  <button type="button" style={s.outlineBtn} onClick={() => focusRoleInMatrix(r)}>Matrix</button>
+                  {!cfg.isSystem && (
+                    <button type="button" style={{ ...s.outlineBtn, color: '#ef4444', borderColor: '#ef4444' }}
+                      onClick={(e) => deleteRoleDefinition(r, e)}>Delete</button>
+                  )}
                 </div>
-                <div style={{ color: t.textMuted, fontSize: 12, lineHeight: 1.4 }}>{cfg.desc}</div>
-              </button>
+              </div>
             );
           })}
         </div>
       </div>
+
+      {showRoleForm && (
+        <div style={s.card}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+            <h4 style={s.cardTitle}>{roleEditSlug ? '✏ Edit Role' : '➕ Add Role'}</h4>
+            <button type="button" style={s.closeBtn} onClick={closeRoleForm}>✕</button>
+          </div>
+          <form onSubmit={saveRoleDefinition}>
+            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+              {!roleEditSlug && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  <label style={s.label}>Role ID (optional)</label>
+                  <input style={s.inp} placeholder="auto from name, e.g. qc_lead"
+                    value={roleForm.slug}
+                    onChange={(e) => setRoleForm((p) => ({ ...p, slug: e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '_') }))} />
+                </div>
+              )}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <label style={s.label}>Display name *</label>
+                <input style={s.inp} required value={roleForm.label}
+                  onChange={(e) => setRoleForm((p) => ({ ...p, label: e.target.value }))} />
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 220 }}>
+                <label style={s.label}>Description</label>
+                <input style={s.inp} value={roleForm.description}
+                  onChange={(e) => setRoleForm((p) => ({ ...p, description: e.target.value }))} />
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <label style={s.label}>Icon</label>
+                <input style={{ ...s.inp, width: 56 }} maxLength={4} value={roleForm.icon}
+                  onChange={(e) => setRoleForm((p) => ({ ...p, icon: e.target.value }))} />
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <label style={s.label}>Color</label>
+                <input style={{ ...s.inp, width: 90 }} type="color" value={roleForm.color}
+                  onChange={(e) => setRoleForm((p) => ({ ...p, color: e.target.value }))} />
+              </div>
+              {!roleEditSlug && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  <label style={s.label}>Copy access from</label>
+                  <select style={s.inp} value={roleForm.inheritsSlug}
+                    onChange={(e) => setRoleForm((p) => ({ ...p, inheritsSlug: e.target.value }))}>
+                    <option value="">None (all pages off)</option>
+                    {roleSlugs.map((slug) => (
+                      <option key={slug} value={slug}>{roleCfgMap[slug]?.label || slug}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+              <button type="submit" style={{ ...s.submitBtn, opacity: roleSaving ? 0.7 : 1 }} disabled={roleSaving}>
+                {roleSaving ? 'Saving…' : roleEditSlug ? 'Update role' : 'Create role'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
 
       {/* Actions — below Role Access Summary */}
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 16 }}>
@@ -590,7 +789,7 @@ export default function UserManagement() {
         <SectionToggle
           open={showUsers}
           onToggle={() => setShowUsers((v) => !v)}
-          label={roleFilter ? `${ROLE_CFG[roleFilter].icon} ${ROLE_CFG[roleFilter].label}` : 'All Users'}
+          label={roleFilter ? `${roleCfgMap[roleFilter]?.icon || '👤'} ${roleCfgMap[roleFilter]?.label || roleFilter}` : 'All Users'}
           count={showUsers ? filteredUsers.length : users.length}
         />
         {showUsers && (
@@ -614,7 +813,7 @@ export default function UserManagement() {
               )}
               <span style={{ color: t.textFaint, fontSize: 12 }}>
                 Showing {filteredUsers.length} of {users.length}
-                {roleFilter ? ` · ${ROLE_CFG[roleFilter].label}` : ''}
+                {roleFilter ? ` · ${roleCfgMap[roleFilter]?.label || roleFilter}` : ''}
                 {search.trim() ? ` · “${search.trim()}”` : ''}
               </span>
             </div>
@@ -633,7 +832,7 @@ export default function UserManagement() {
                     </td></tr>
                   )}
                   {filteredUsers.map(u => {
-                    const cfg = ROLE_CFG[u.role] || ROLE_CFG.operator;
+                    const cfg = roleCfgMap[u.role] || { color: t.textMuted, label: u.role, icon: '👤' };
                     const isMe = u.username === me?.username;
                     const isEditing = showForm && editId === u.id;
                     return (
@@ -776,16 +975,28 @@ export default function UserManagement() {
                 </button>
               </div>
             </div>
-            <div style={{ overflowX: 'auto' }}>
+            <div style={{ overflowX: 'auto' }} ref={matrixTableRef}>
               <table style={s.table}>
                 <thead>
                   <tr>
                     <th style={s.th}>Feature</th>
-                    {ROLES.map((r) => {
+                    {roleSlugs.map((r) => {
+                      const cfg = roleCfgMap[r] || { color: t.textMuted, label: r, icon: '👤' };
                       const allOn = matrixRows.every((row) => !!roleAccessEdit[row.id]?.[r]);
                       const someOn = matrixRows.some((row) => !!roleAccessEdit[row.id]?.[r]);
+                      const highlighted = matrixHighlightRole === r;
                       return (
-                        <th key={r} style={{ ...s.th, color: ROLE_CFG[r].color, textAlign: 'center' }}>
+                        <th
+                          key={r}
+                          data-role-col={r}
+                          style={{
+                            ...s.th,
+                            color: cfg.color,
+                            textAlign: 'center',
+                            background: highlighted ? `${cfg.color}22` : undefined,
+                            boxShadow: highlighted ? `inset 0 -3px 0 ${cfg.color}` : undefined,
+                          }}
+                        >
                           <label
                             style={{
                               display: 'inline-flex',
@@ -795,7 +1006,7 @@ export default function UserManagement() {
                               cursor: 'pointer',
                               whiteSpace: 'nowrap',
                             }}
-                            title={`${allOn ? 'Clear' : 'Select'} ${ROLE_CFG[r].label} for all features`}
+                            title={`${allOn ? 'Clear' : 'Select'} ${cfg.label} for all features`}
                           >
                             <input
                               type="checkbox"
@@ -803,7 +1014,7 @@ export default function UserManagement() {
                               ref={(el) => { if (el) el.indeterminate = someOn && !allOn; }}
                               onChange={(e) => setRoleForAllFeatures(r, e.target.checked)}
                             />
-                            <span>{ROLE_CFG[r].icon} {ROLE_CFG[r].label}</span>
+                            <span>{cfg.icon} {cfg.label}</span>
                           </label>
                         </th>
                       );
@@ -814,8 +1025,8 @@ export default function UserManagement() {
                   {matrixRows.map((row, idx) => {
                     const rolesMap = roleAccessEdit[row.id] || row.roles;
                     const defaults = row.roles || {};
-                    const allRolesOn = ROLES.every((r) => !!rolesMap[r]);
-                    const someRolesOn = ROLES.some((r) => !!rolesMap[r]);
+                    const allRolesOn = roleSlugs.every((r) => !!rolesMap[r]);
+                    const someRolesOn = roleSlugs.some((r) => !!rolesMap[r]);
                     const prevGroup = idx > 0 ? matrixRows[idx - 1].group : null;
                     const showGroup = row.group && row.group !== prevGroup;
                     return (
@@ -823,7 +1034,7 @@ export default function UserManagement() {
                         {showGroup && (
                           <tr>
                             <td
-                              colSpan={1 + ROLES.length}
+                              colSpan={1 + roleSlugs.length}
                               style={{
                                 ...s.td,
                                 background: t.surface2,
@@ -851,18 +1062,22 @@ export default function UserManagement() {
                               {row.feature}
                             </label>
                           </td>
-                          {ROLES.map((r) => {
+                          {roleSlugs.map((r) => {
                             const current = !!rolesMap[r];
                             const defOn = !!defaults[r];
                             const changed = current !== defOn;
-                            const cfg = ROLE_CFG[r] || {};
+                            const cfg = roleCfgMap[r] || {};
+                            const colHighlight = matrixHighlightRole === r;
                             return (
                               <td
                                 key={r}
+                                data-role-col={r}
                                 style={{
                                   ...s.td,
                                   textAlign: 'center',
-                                  background: changed ? `${t.accent}18` : 'transparent',
+                                  background: colHighlight
+                                    ? `${(cfg.color || t.accent)}14`
+                                    : (changed ? `${t.accent}18` : 'transparent'),
                                   verticalAlign: 'middle',
                                 }}
                                 title={

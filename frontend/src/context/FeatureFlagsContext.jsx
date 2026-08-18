@@ -12,6 +12,7 @@ const FeatureFlagsCtx = createContext({
   roleAccess: { ...getDefaultFeatureRoleAccess(), ...getAccessMatrixRoleDefaults() },
   accessMatrix: [],
   toggleableRoles: [],
+  roles: [],
   registry: null,
   loading: true,
   reload: () => {},
@@ -27,6 +28,7 @@ export function FeatureFlagsProvider({ children }) {
   }));
   const [accessMatrix, setAccessMatrix] = useState([]);
   const [toggleableRoles, setToggleableRoles] = useState([]);
+  const [roles, setRoles] = useState([]);
   const [registry, setRegistry] = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -35,19 +37,21 @@ export function FeatureFlagsProvider({ children }) {
       .then(r => {
         setModules({ ...getDefaultFeatureModules(), ...(r.data?.modules || {}) });
         setRoleAccess(() => {
+          const slugs = r.data?.toggleableRoles || [];
           const defaults = {
             ...getDefaultFeatureRoleAccess(),
-            ...getAccessMatrixRoleDefaults(),
+            ...getAccessMatrixRoleDefaults(slugs.length ? slugs : undefined),
           };
           const stored = r.data?.roleAccess || {};
           const merged = { ...defaults };
-          for (const [id, roles] of Object.entries(stored)) {
-            merged[id] = { ...(defaults[id] || {}), ...(roles || {}) };
+          for (const [id, roleMap] of Object.entries(stored)) {
+            merged[id] = { ...(defaults[id] || {}), ...(roleMap || {}) };
           }
           return merged;
         });
         setAccessMatrix(r.data?.accessMatrix || []);
         setToggleableRoles(r.data?.toggleableRoles || []);
+        setRoles(r.data?.roles || []);
         if (r.data?.registry) setRegistry(r.data.registry);
       })
       .catch(() => {
@@ -77,6 +81,7 @@ export function FeatureFlagsProvider({ children }) {
       roleAccess,
       accessMatrix,
       toggleableRoles,
+      roles,
       registry,
       loading,
       reload,

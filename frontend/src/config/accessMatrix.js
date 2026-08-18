@@ -15,13 +15,13 @@ export const ACCESS_MATRIX_ROLES = [
   'quality',
 ];
 
-function rolesMapFromAllowed(allowed) {
+function rolesMapFromAllowed(allowed, roleSlugs = ACCESS_MATRIX_ROLES) {
   const set = new Set(allowed || []);
   const out = {};
-  for (const role of ACCESS_MATRIX_ROLES) {
+  for (const role of roleSlugs) {
     out[role] = set.has(role);
   }
-  if (set.has('admin') && !set.has('site_admin')) out.site_admin = true;
+  if (set.has('admin') && roleSlugs.includes('site_admin') && !set.has('site_admin')) out.site_admin = true;
   return out;
 }
 
@@ -56,7 +56,27 @@ const CAPABILITY_ROWS = [
   },
 ];
 
-function pageRowsFromRegistry() {
+export function normalizeAccessMatrixFromApi(apiRows, roleSlugs = ACCESS_MATRIX_ROLES) {
+  if (!Array.isArray(apiRows) || apiRows.length === 0) {
+    return [...pageRowsFromRegistry(roleSlugs), ...CAPABILITY_ROWS.map((r) => ({
+      ...r,
+      roles: rolesMapFromAllowed(Object.keys(r.roles).filter((k) => r.roles[k]), roleSlugs),
+    }))];
+  }
+  return apiRows.map((row) => ({
+    id: row.id,
+    feature: row.label || row.feature,
+    registryId: row.registryId,
+    group: row.group || (row.kind === 'action' ? 'Actions' : 'Pages'),
+    kind: row.kind || (String(row.id || '').startsWith('capability.') ? 'action' : 'page'),
+    roles: {
+      ...rolesMapFromAllowed([], roleSlugs),
+      ...(row.defaultRoles || row.roles || {}),
+    },
+  }));
+}
+
+function pageRowsFromRegistry(roleSlugs = ACCESS_MATRIX_ROLES) {
   const rows = [];
   for (const item of registryJson.standalone || []) {
     rows.push({
@@ -65,7 +85,7 @@ function pageRowsFromRegistry() {
       registryId: item.id,
       group: 'Pages',
       kind: 'page',
-      roles: rolesMapFromAllowed(item.roles || ACCESS_MATRIX_ROLES),
+      roles: rolesMapFromAllowed(item.roles || roleSlugs, roleSlugs),
     });
   }
   for (const group of registryJson.groups || []) {
@@ -78,20 +98,23 @@ function pageRowsFromRegistry() {
         registryId: item.id,
         group: groupLabel,
         kind: 'page',
-        roles: rolesMapFromAllowed(allowed),
+        roles: rolesMapFromAllowed(allowed, roleSlugs),
       });
     }
   }
   return rows;
 }
 
-/** @type {{ id: string, feature: string, registryId?: string, group?: string, kind?: string, roles: Record<string, boolean> }[]} */
-export const ACCESS_MATRIX = [...pageRowsFromRegistry(), ...CAPABILITY_ROWS];
-
-/** Default roleAccess map keyed by matrix id (and registryId when present). */
-export function getAccessMatrixRoleDefaults() {
+export function getAccessMatrixRoleDefaults(roleSlugs = ACCESS_MATRIX_ROLES) {
+  const rows = [...pageRowsFromRegistry(roleSlugs), ...CAPABILITY_ROWS.map((row) => ({
+    ...row,
+    roles: rolesMapFromAllowed(
+      Object.entries(row.roles || {}).filter(([, v]) => v).map(([k]) => k),
+      roleSlugs,
+    ),
+  }))];
   const out = {};
-  for (const row of ACCESS_MATRIX) {
+  for (const row of rows) {
     out[row.id] = { ...row.roles };
     if (row.registryId && row.registryId !== row.id) {
       out[row.registryId] = { ...row.roles };
@@ -111,14 +134,5 @@ export function hasRole(userRole, ...allowed) {
   return set.has(userRole);
 }
 
-export function normalizeAccessMatrixFromApi(apiRows) {
-  if (!Array.isArray(apiRows) || apiRows.length === 0) return ACCESS_MATRIX;
-  return apiRows.map((row) => ({
-    id: row.id,
-    feature: row.label || row.feature,
-    registryId: row.registryId,
-    group: row.group || (row.kind === 'action' ? 'Actions' : 'Pages'),
-    kind: row.kind || (String(row.id || '').startsWith('capability.') ? 'action' : 'page'),
-    roles: { ...rolesMapFromAllowed([]), ...(row.defaultRoles || row.roles || {}) },
-  }));
-}
+/** @type {{ id: string, feature: string, registryId?: string, group?: string, kind?: string, roles: Record<string, boolean> }[]} */
+export const ACCESS_MATRIX = [...pageRowsFromRegistry(), ...CAPABILITY_ROWS];

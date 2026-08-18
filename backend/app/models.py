@@ -98,10 +98,25 @@ class User(Base):
     id = Column(Integer, primary_key=True, index=True)
     username = Column(String(50), unique=True, nullable=False)
     password_hash = Column(String(255), nullable=False)
-    role = Column(Enum("operator", "supervisor", "maintenance", "admin", "site_admin", "quality", "superadmin"), nullable=False)
+    role = Column(String(50), nullable=False)
     reference_photo_url = Column(String(500), nullable=True)
     # 1 = must set a policy-compliant password once (upgrade); cleared after successful change
     password_must_change = Column(Integer, default=0, nullable=False)
+
+
+class AppRole(Base):
+    """Configurable roles for login users — drives Feature Access Matrix columns."""
+    __tablename__ = "app_roles"
+    id = Column(Integer, primary_key=True, index=True)
+    slug = Column(String(50), unique=True, nullable=False, index=True)
+    label = Column(String(100), nullable=False)
+    description = Column(String(500), nullable=True)
+    color = Column(String(20), default="#64748b")
+    icon = Column(String(10), default="👤")
+    is_system = Column(Integer, default=0, nullable=False)
+    inherits_slug = Column(String(50), nullable=True)
+    sort_order = Column(Integer, default=100)
+    active = Column(Integer, default=1, nullable=False)
 
 
 class Operator(Base):

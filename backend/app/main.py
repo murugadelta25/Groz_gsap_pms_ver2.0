@@ -8,6 +8,7 @@ from .routers import email_router
 from .routers import machines as machines_router
 from .routers import stations as stations_router
 from .routers import users as users_router
+from .routers import roles as roles_router
 from .routers import config as config_router
 from .routers import hourly_output as hourly_output_router
 from .routers import parts as parts_router
@@ -143,35 +144,36 @@ def _ensure_deviation_alert_table():
 
 
 def _ensure_superadmin_role():
-    """Add 'superadmin' to the users.role ENUM and bootstrap the first superadmin."""
+    """Migrate users.role to VARCHAR, seed app_roles, bootstrap SuperAdmin."""
     from .models import User, SessionLocal
     try:
         insp = inspect(engine)
-        if not insp.has_table("users"):
-            return
-        cols = insp.get_columns("users")
-        role_col = next((c for c in cols if c["name"] == "role"), None)
-        if not role_col:
-            return
-        role_type = role_col.get("type")
-        enums = set(getattr(role_type, "enums", None) or [])
-        required = {"operator", "supervisor", "maintenance", "admin", "site_admin", "quality", "superadmin"}
-        if not enums or not required.issubset(enums):
-            with engine.begin() as conn:
-                conn.execute(text(
-                    "ALTER TABLE users MODIFY COLUMN role "
-                    "ENUM('operator','supervisor','maintenance','admin','site_admin',"
-                    "'quality','superadmin') NOT NULL"
-                ))
-            print("[OK] users.role ENUM includes site_admin and superadmin")
+        if insp.has_table("users"):
+            cols = insp.get_columns("users")
+            role_col = next((c for c in cols if c["name"] == "role"), None)
+            if role_col:
+                role_type = role_col.get("type")
+                enums = getattr(role_type, "enums", None)
+                if enums:
+                    with engine.begin() as conn:
+                        conn.execute(text(
+                            "ALTER TABLE users MODIFY COLUMN role VARCHAR(50) NOT NULL"
+                        ))
+                    print("[OK] users.role migrated from ENUM to VARCHAR(50) for dynamic roles")
     except Exception as exc:
-        print(f"[WARN] superadmin role migration skipped: {exc}")
-        return
+        print(f"[WARN] users.role VARCHAR migration skipped: {exc}")
+
+    try:
+        db = SessionLocal()
+        ensure_roles_table_and_seed(db)
+        print("[OK] app_roles table seeded")
+        db.close()
+    except Exception as exc:
+        print(f"[WARN] app_roles seed skipped: {exc}")
 
     try:
         from .auth import hash_password
 
-        # Reserved platform account — do not reuse shop-floor admin credentials.
         SUPERADMIN_USERNAME = "SuperAdmin"
         SUPERADMIN_DEFAULT_PASSWORD = "Password@123"
 
@@ -244,6 +246,7 @@ app.include_router(email_router.router)
 app.include_router(stations_router.router)
 app.include_router(machines_router.router)
 app.include_router(users_router.router)
+app.include_router(roles_router.router)
 app.include_router(config_router.router)
 app.include_router(hourly_output_router.router)
 app.include_router(parts_router.router)
